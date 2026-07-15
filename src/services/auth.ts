@@ -10,7 +10,7 @@ export async function loginRequest(email: string, password: string): Promise<Log
     return {
       success: true,
       token: 'sahte-jwt-token',
-      user: { id: '1', name: 'Test Kullanıcı', role: 'ADMIN', isFirstLogin: true },
+      user: { id: '1', name: 'Test Kullanıcı', role: 'EMPLOYEE', isFirstLogin: true },
     };
   }
   return { success: false, message: 'E-posta veya şifre hatalı' };
