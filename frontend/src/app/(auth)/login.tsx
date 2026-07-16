@@ -1,21 +1,24 @@
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, TextInput } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { useTheme } from '@/hooks/use-theme';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Space } from '@/constants/design';
+import { useDesign } from '@/hooks/use-design';
 import { loginRequest } from '@/services/auth';
 import { useAuthStore } from '@/store/authStore';
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function LoginScreen() {
+  const { colors } = useDesign();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const login = useAuthStore((s) => s.login);
-  const theme = useTheme();
 
   const handleLogin = async () => {
     if (!EMAIL_REGEX.test(email)) {
@@ -26,7 +29,6 @@ export default function LoginScreen() {
       setError('Şifre boş olamaz');
       return;
     }
-
     setError('');
     setLoading(true);
     const result = await loginRequest(email, password);
@@ -40,40 +42,77 @@ export default function LoginScreen() {
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="title">PermitFlow</ThemedText>
-      <TextInput
-        style={[styles.input, { color: theme.text, borderColor: theme.text }]}
-        placeholder="E-posta"
-        placeholderTextColor={theme.textSecondary ?? '#888'}
-        autoCapitalize="none"
-        value={email}
-        onChangeText={setEmail}
-      />
-      <TextInput
-        style={[styles.input, { color: theme.text, borderColor: theme.text }]}
-        placeholder="Şifre"
-        placeholderTextColor={theme.textSecondary ?? '#888'}
-        secureTextEntry
-        value={password}
-        onChangeText={setPassword}
-      />
-      {error !== '' && <ThemedText style={styles.error}>{error}</ThemedText>}
-      <Pressable style={styles.button} onPress={handleLogin} disabled={loading}>
-        {loading ? <ActivityIndicator color="#fff" /> : <ThemedText style={styles.buttonText}>Giriş Yap</ThemedText>}
-      </Pressable>
-      <ThemedText type="small" style={styles.hint}>
-        Test için: test@permitflow.com / 123456
-      </ThemedText>
-    </ThemedView>
+    <View style={[styles.screen, { backgroundColor: colors.bg }]}>
+      <View style={styles.card}>
+        <View style={styles.header}>
+          <ThemedText type="title" style={styles.brand}>
+            PermitFlow
+          </ThemedText>
+          <ThemedText style={[styles.subtitle, { color: colors.textMuted }]}>
+            Kurumsal izin yönetim sistemi
+          </ThemedText>
+        </View>
+
+        <Card>
+          <Input
+            placeholder="E-posta"
+            autoCapitalize="none"
+            keyboardType="email-address"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <Input
+            placeholder="Şifre"
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+
+          {error !== '' && (
+            <ThemedText style={[styles.error, { color: colors.danger }]}>{error}</ThemedText>
+          )}
+
+          <Button label="Giriş Yap" onPress={handleLogin} loading={loading} />
+        </Card>
+
+        <ThemedText style={[styles.hint, { color: colors.textFaint }]}>
+          Test — mobil: employee@permitflow.com{'\n'}web: hr@permitflow.com veya admin@permitflow.com{'\n'}şifre: 123456
+        </ThemedText>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 24, gap: 12 },
-  input: { borderWidth: 1, borderRadius: 8, padding: 12 },
-  button: { backgroundColor: '#208AEF', borderRadius: 8, padding: 14, alignItems: 'center', marginTop: 8 },
-  buttonText: { color: '#fff', fontWeight: '600' },
-  error: { color: '#e11d48' },
-  hint: { textAlign: 'center', opacity: 0.5, marginTop: 4 },
+  screen: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Space.xl,
+  },
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    gap: Space.md,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: Space.lg,
+    gap: Space.xs,
+  },
+  brand: {
+    textAlign: 'center',
+  },
+  subtitle: {
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  error: {
+    fontSize: 13,
+  },
+  hint: {
+    textAlign: 'center',
+    fontSize: 12,
+    marginTop: Space.xl,
+  },
 });

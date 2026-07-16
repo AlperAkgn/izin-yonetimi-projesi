@@ -1,79 +1,114 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { Card } from '@/components/ui/card';
+import { Screen } from '@/components/ui/screen';
+import { Space } from '@/constants/design';
+import { useDesign } from '@/hooks/use-design';
 import { useAuthStore } from '@/store/authStore';
 
-function EmployeeCards() {
-  return (
-    <>
-      <ThemedView type="backgroundElement" style={styles.card}>
-        <ThemedText type="subtitle">Kalan İzin Bakiyem</ThemedText>
-        <ThemedText type="title">14 gün</ThemedText>
-      </ThemedView>
-      <ThemedView type="backgroundElement" style={styles.card}>
-        <ThemedText type="subtitle">Bekleyen Talebim</ThemedText>
-        <ThemedText type="title">1</ThemedText>
-      </ThemedView>
-    </>
-  );
-}
+type Stat = { label: string; value: string };
 
-function HRCards() {
-  return (
-    <>
-      <ThemedView type="backgroundElement" style={styles.card}>
-        <ThemedText type="subtitle">Şubede Bugün İzinli</ThemedText>
-        <ThemedText type="title">3 kişi</ThemedText>
-      </ThemedView>
-      <ThemedView type="backgroundElement" style={styles.card}>
-        <ThemedText type="subtitle">Onay Bekleyen</ThemedText>
-        <ThemedText type="title">5</ThemedText>
-      </ThemedView>
-    </>
-  );
-}
+const STATS_BY_ROLE: Record<string, Stat[]> = {
+  EMPLOYEE: [
+    { label: 'Kalan izin bakiyem', value: '14 gün' },
+    { label: 'Bekleyen talebim', value: '1' },
+    { label: 'Bu yıl kullanılan', value: '6 gün' },
+  ],
+  HR: [
+    { label: 'Şubede bugün izinli', value: '3 kişi' },
+    { label: 'Onay bekleyen', value: '5' },
+    { label: 'Bu ay onaylanan', value: '18' },
+  ],
+  ADMIN: [
+    { label: 'Toplam şube', value: '4' },
+    { label: 'Aktif kullanıcı', value: '42' },
+    { label: 'Anlık bağlantı', value: '11' },
+  ],
+};
 
-function AdminCards() {
+const ROLE_LABEL: Record<string, string> = {
+  EMPLOYEE: 'Personel',
+  HR: 'İnsan Kaynakları',
+  ADMIN: 'Sistem Yöneticisi',
+};
+
+function StatCard({ label, value, accent }: Stat & { accent: string }) {
+  const { colors } = useDesign();
   return (
-    <>
-      <ThemedView type="backgroundElement" style={styles.card}>
-        <ThemedText type="subtitle">Toplam Şube</ThemedText>
-        <ThemedText type="title">4</ThemedText>
-      </ThemedView>
-      <ThemedView type="backgroundElement" style={styles.card}>
-        <ThemedText type="subtitle">Aktif Kullanıcı</ThemedText>
-        <ThemedText type="title">42</ThemedText>
-      </ThemedView>
-    </>
+    <Card>
+      <ThemedText style={[styles.statLabel, { color: colors.textMuted }]}>{label}</ThemedText>
+      <ThemedText style={[styles.statValue, { color: accent }]}>{value}</ThemedText>
+    </Card>
   );
 }
 
 export default function DashboardScreen() {
+  const { colors } = useDesign();
   const user = useAuthStore((s) => s.user);
+  const stats = user ? STATS_BY_ROLE[user.role] ?? [] : [];
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="title" style={styles.greeting}>
-        Merhaba, {user?.name}
-      </ThemedText>
-      <ThemedText type="small" style={styles.role}>
-        {user?.role}
-      </ThemedText>
+    <Screen>
+      <View style={styles.header}>
+        <ThemedText style={[styles.greeting, { color: colors.textMuted }]}>
+          Merhaba,
+        </ThemedText>
+        <ThemedText type="title">{user?.name}</ThemedText>
+        <View style={[styles.rolePill, { backgroundColor: colors.primarySoft }]}>
+          <ThemedText style={[styles.roleText, { color: colors.primary }]}>
+            {user ? ROLE_LABEL[user.role] : ''}
+          </ThemedText>
+        </View>
+        {user?.branchName && (
+          <ThemedText style={[styles.branch, { color: colors.textMuted }]}>
+            📍 {user.branchName}
+          </ThemedText>
+        )}
+      </View>
 
-      <ThemedView style={styles.cardsWrapper}>
-        {user?.role === 'EMPLOYEE' && <EmployeeCards />}
-        {user?.role === 'HR' && <HRCards />}
-        {user?.role === 'ADMIN' && <AdminCards />}
-      </ThemedView>
-    </ThemedView>
+      <View style={styles.statsWrapper}>
+        {stats.map((s) => (
+          <StatCard key={s.label} label={s.label} value={s.value} accent={colors.text} />
+        ))}
+      </View>
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20, gap: 8 },
-  greeting: { marginTop: 20 },
-  role: { marginBottom: 12, opacity: 0.6 },
-  cardsWrapper: { gap: 12 },
-  card: { padding: 16, borderRadius: 12, gap: 4 },
+  header: {
+    marginTop: Space.sm,
+    marginBottom: Space.lg,
+    gap: Space.xs,
+  },
+  greeting: {
+    fontSize: 15,
+  },
+  rolePill: {
+    alignSelf: 'flex-start',
+    paddingHorizontal: Space.md,
+    paddingVertical: 5,
+    borderRadius: 999,
+    marginTop: Space.xs,
+  },
+  branch: {
+    fontSize: 13,
+    marginTop: 2,
+  },
+  roleText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  statsWrapper: {
+    gap: Space.md,
+  },
+  statLabel: {
+    fontSize: 14,
+  },
+  statValue: {
+    fontSize: 28,
+    fontWeight: '700',
+    lineHeight: 34,
+  },
 });
