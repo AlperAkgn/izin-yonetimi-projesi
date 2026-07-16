@@ -40,23 +40,55 @@ namespace LeaveManagementAPI.Controller
 
             var expiresAt = DateTime.UtcNow.AddMinutes(GetTokenLifetimeMinutes());
             var token = CreateToken(user, expiresAt);
-            user.IsTempPassword = false;
-            await _context.SaveChangesAsync();
 
             return Ok(new LoginResponse
             {
                 Token = token,
                 ExpiresAt = expiresAt,
-                User = new AuthUserResponse
-                {
-                    Id = user.Id,
-                    Mail = user.Mail,
-                    Name = user.Name,
-                    Surname = user.Surname,
-                    Role = user.Role.ToString(),
-                    IsFirstLogin = user.IsTempPassword
-                }
+                User = ToAuthUserResponse(user)
             });
+        }
+
+        [Authorize]
+        [HttpPost("change-password")]
+        public async Task<ActionResult<AuthUserResponse>> ChangePassword(ChangePasswordRequest request)
+        {
+            var userIdValue = User.FindFirstValue(JwtRegisteredClaimNames.Sub)
+                ?? User.FindFirstValue(ClaimTypes.NameIdentifier);
+
+            if (!long.TryParse(userIdValue, out var userId))
+            {
+                return Unauthorized(new { message = "Gecersiz token." });
+            }
+
+            var user = await _context.Users
+                .SingleOrDefaultAsync(u => u.Id == userId && u.IsActive);
+
+            if (user is null)
+            {
+                return NotFound(new { message = "Kullanici bulunamadi." });
+            }
+
+            if (!user.IsTempPassword)
+            {
+                return BadRequest(new { message = "Sifre daha once degistirilmis." });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
+            {
+                return BadRequest(new { message = "Yeni sifre en az 6 karakter olmali." });
+            }
+
+            if (request.NewPassword != request.ConfirmPassword)
+            {
+                return BadRequest(new { message = "Sifreler eslesmiyor." });
+            }
+
+            user.Password = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
+            user.IsTempPassword = false;
+            await _context.SaveChangesAsync();
+
+            return Ok(ToAuthUserResponse(user));
         }
 
 
@@ -126,6 +158,19 @@ namespace LeaveManagementAPI.Controller
                 || password.StartsWith("$2b$", StringComparison.Ordinal)
                 || password.StartsWith("$2x$", StringComparison.Ordinal)
                 || password.StartsWith("$2y$", StringComparison.Ordinal);
+        }
+
+        private static AuthUserResponse ToAuthUserResponse(User user)
+        {
+            return new AuthUserResponse
+            {
+                Id = user.Id,
+                Mail = user.Mail,
+                Name = user.Name,
+                Surname = user.Surname,
+                Role = user.Role.ToString(),
+                IsFirstLogin = user.IsTempPassword
+            };
         }
     }
 }
