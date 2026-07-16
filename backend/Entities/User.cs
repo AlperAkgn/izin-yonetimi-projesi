@@ -23,11 +23,6 @@ namespace LeaveManagementAPI.Entities
         [MaxLength(512)]
         public string Password { get; set; } = string.Empty;
 
-        [MaxLength(1024)]
-        public string? Token { get; set; }
-
-        public DateTime? ExpToken { get; set; }
-
         [Required]
         [MaxLength(100)]
         public string Name { get; set; } = string.Empty;
