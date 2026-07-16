@@ -1,18 +1,21 @@
 import { router } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
-import { useTheme } from '@/hooks/use-theme';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
+import { Space } from '@/constants/design';
+import { useDesign } from '@/hooks/use-design';
 import { useAuthStore } from '@/store/authStore';
 
 export default function ChangePasswordScreen() {
+  const { colors } = useDesign();
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const completeFirstLogin = useAuthStore((s) => s.completeFirstLogin);
-  const theme = useTheme();
 
   const handleSubmit = () => {
     if (newPassword.length < 6) {
@@ -26,54 +29,71 @@ export default function ChangePasswordScreen() {
     setError('');
     console.log('Yeni şifre kaydedildi:', newPassword);
     completeFirstLogin();
-    router.replace('/'); // artık elle yönlendiriyoruz, Redirect'e güvenmiyoruz
+    router.replace('/');
   };
 
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="title">Yeni Şifre Belirle</ThemedText>
-      <ThemedText type="small">İlk girişte şifreni değiştirmen gerekiyor.</ThemedText>
+    <View style={[styles.screen, { backgroundColor: colors.bg }]}>
+      <View style={styles.card}>
+        <View style={styles.header}>
+          <ThemedText type="title" style={styles.title}>
+            Yeni Şifre Belirle
+          </ThemedText>
+          <ThemedText style={[styles.subtitle, { color: colors.textMuted }]}>
+            İlk girişte güvenliğin için şifreni değiştirmen gerekiyor
+          </ThemedText>
+        </View>
 
-      <TextInput
-        style={[styles.input, { color: theme.text, borderColor: theme.text }]}
-        placeholder="Yeni şifre"
-        placeholderTextColor={theme.textSecondary ?? '#888'}
-        secureTextEntry
-        value={newPassword}
-        onChangeText={setNewPassword}
-      />
-      <TextInput
-        style={[styles.input, { color: theme.text, borderColor: theme.text }]}
-        placeholder="Yeni şifre (tekrar)"
-        placeholderTextColor={theme.textSecondary ?? '#888'}
-        secureTextEntry
-        value={confirmPassword}
-        onChangeText={setConfirmPassword}
-      />
+        <Card>
+          <Input
+            placeholder="Yeni şifre"
+            secureTextEntry
+            value={newPassword}
+            onChangeText={setNewPassword}
+          />
+          <Input
+            placeholder="Yeni şifre (tekrar)"
+            secureTextEntry
+            value={confirmPassword}
+            onChangeText={setConfirmPassword}
+          />
 
-      {error !== '' && <ThemedText style={styles.error}>{error}</ThemedText>}
+          {error !== '' && (
+            <ThemedText style={[styles.error, { color: colors.danger }]}>{error}</ThemedText>
+          )}
 
-      <Pressable style={styles.button} onPress={handleSubmit}>
-        <ThemedText style={styles.buttonText}>Şifreyi Kaydet</ThemedText>
-      </Pressable>
-    </ThemedView>
+          <Button label="Şifreyi Kaydet" onPress={handleSubmit} />
+        </Card>
+      </View>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', padding: 24, gap: 12 },
-  input: {
-    borderWidth: 1,
-    borderRadius: 8,
-    padding: 12,
-  },
-  button: {
-    backgroundColor: '#208AEF',
-    borderRadius: 8,
-    padding: 14,
+  screen: {
+    flex: 1,
+    justifyContent: 'center',
     alignItems: 'center',
-    marginTop: 8,
+    padding: Space.xl,
   },
-  buttonText: { color: '#fff', fontWeight: '600' },
-  error: { color: '#e11d48' },
+  card: {
+    width: '100%',
+    maxWidth: 420,
+    gap: Space.md,
+  },
+  header: {
+    alignItems: 'center',
+    marginBottom: Space.lg,
+    gap: Space.xs,
+  },
+  title: {
+    textAlign: 'center',
+  },
+  subtitle: {
+    textAlign: 'center',
+    fontSize: 14,
+  },
+  error: {
+    fontSize: 13,
+  },
 });
