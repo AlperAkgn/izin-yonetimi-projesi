@@ -1,4 +1,3 @@
-import Feather from '@expo/vector-icons/Feather';
 import { router } from 'expo-router';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
 
@@ -61,20 +60,10 @@ function ConversationRow({ item, isLast }: { item: Conversation; isLast: boolean
 }
 
 export default function MessagesScreen() {
-  const { colors } = useDesign();
   const conversations = useMessagesStore((s) => s.conversations);
 
   return (
     <Screen scroll={false}>
-      <View style={styles.headerRow}>
-        <ThemedText type="title">Mesajlar</ThemedText>
-        <Pressable
-          onPress={() => router.push('/new-chat')}
-          style={[styles.newButton, { backgroundColor: colors.primary }]}>
-          <Feather name="edit" size={18} color="#fff" />
-        </Pressable>
-      </View>
-
       <FlatList
         data={conversations}
         keyExtractor={(c) => c.id}

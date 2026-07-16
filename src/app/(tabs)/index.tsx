@@ -60,6 +60,11 @@ export default function DashboardScreen() {
             {user ? ROLE_LABEL[user.role] : ''}
           </ThemedText>
         </View>
+        {user?.branchName && (
+          <ThemedText style={[styles.branch, { color: colors.textMuted }]}>
+            📍 {user.branchName}
+          </ThemedText>
+        )}
       </View>
 
       <View style={styles.statsWrapper}>
@@ -87,6 +92,10 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     marginTop: Space.xs,
   },
+  branch: {
+    fontSize: 13,
+    marginTop: 2,
+  },
   roleText: {
     fontSize: 13,
     fontWeight: '600',
@@ -100,5 +109,6 @@ const styles = StyleSheet.create({
   statValue: {
     fontSize: 28,
     fontWeight: '700',
+    lineHeight: 34,
   },
 });

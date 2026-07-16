@@ -76,7 +76,7 @@ export default function LoginScreen() {
         </Card>
 
         <ThemedText style={[styles.hint, { color: colors.textFaint }]}>
-          Test: test@permitflow.com / 123456
+          Test — mobil: employee@permitflow.com{'\n'}web: hr@permitflow.com veya admin@permitflow.com{'\n'}şifre: 123456
         </ThemedText>
       </View>
     </View>

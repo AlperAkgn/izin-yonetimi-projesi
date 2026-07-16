@@ -4,6 +4,8 @@ type User = {
   id: string;
   name: string;
   role: 'EMPLOYEE' | 'HR' | 'ADMIN';
+  branchId: string | null;
+  branchName: string | null;
   isFirstLogin: boolean;
 };
 
