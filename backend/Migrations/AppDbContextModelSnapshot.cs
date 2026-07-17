@@ -157,6 +157,10 @@ namespace LeaveManagementAPI.Migrations
                         .HasColumnType("character varying(512)")
                         .HasColumnName("password");
 
+                    b.Property<DateTime?>("TempPasswordUsedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("tempPasswordUsedAt");
+
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasMaxLength(32)

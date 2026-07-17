@@ -38,6 +38,19 @@ namespace LeaveManagementAPI.Controller
                 return Unauthorized(new { message = "E-posta veya sifre hatali." });
             }
 
+            if (user.IsTempPassword)
+            {
+                var affectedRows = await _context.Users
+                    .Where(u => u.Id == user.Id && u.TempPasswordUsedAt == null)
+                    .ExecuteUpdateAsync(setters => setters
+                        .SetProperty(u => u.TempPasswordUsedAt, DateTime.UtcNow));
+
+                if (affectedRows == 0)
+                {
+                    return Unauthorized(new { message = "Gecici sifre daha once kullanildi. Yoneticiyle iletisime gecin." });
+                }
+            }
+
             var expiresAt = DateTime.UtcNow.AddMinutes(GetTokenLifetimeMinutes());
             var token = CreateToken(user, expiresAt);
 
@@ -74,6 +87,11 @@ namespace LeaveManagementAPI.Controller
                 return BadRequest(new { message = "Sifre daha once degistirilmis." });
             }
 
+            if (user.TempPasswordUsedAt is null)
+            {
+                return BadRequest(new { message = "Yeni sifre belirlemek icin once gecici sifre ile giris yapmalisiniz." });
+            }
+
             if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 6)
             {
                 return BadRequest(new { message = "Yeni sifre en az 6 karakter olmali." });
@@ -86,6 +104,7 @@ namespace LeaveManagementAPI.Controller
 
             user.Password = BCrypt.Net.BCrypt.HashPassword(request.NewPassword);
             user.IsTempPassword = false;
+            user.TempPasswordUsedAt = null;
             await _context.SaveChangesAsync();
 
             return Ok(ToAuthUserResponse(user));

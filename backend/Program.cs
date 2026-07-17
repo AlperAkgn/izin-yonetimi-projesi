@@ -6,6 +6,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using LeaveManagementAPI.Data;
+using LeaveManagementAPI.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -14,6 +15,10 @@ var builder = WebApplication.CreateBuilder(args);
 // EF Core InMemory Database
 builder.Services.AddDbContext<AppDbContext>(options =>
     options.UseNpgsql(builder.Configuration.GetConnectionString("DefaultConnection")));
+
+builder.Services.Configure<MailSettings>(
+    builder.Configuration.GetSection(MailSettings.SectionName));
+builder.Services.AddScoped<IMailService, MailService>();
 
 // Controllers with JSON options
 builder.Services.AddControllers()
