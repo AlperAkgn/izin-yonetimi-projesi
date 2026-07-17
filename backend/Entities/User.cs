@@ -37,6 +37,8 @@ namespace LeaveManagementAPI.Entities
         [Required]
         public bool IsTempPassword { get; set; } = false;
 
+        public DateTime? TempPasswordUsedAt { get; set; }
+
         [Required]
         public DateTime StartAt { get; set; }
         public DateTime? DeletedAt { get; set; }
