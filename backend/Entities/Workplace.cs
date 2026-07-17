@@ -17,10 +17,6 @@ namespace LeaveManagementAPI.Entities
         public string Name { get; set; } = string.Empty;
 
         [Required]
-        [MaxLength(200)]
-        public string Surname { get; set; } = string.Empty;
-
-        [Required]
         [MaxLength(500)]
         public string Address { get; set; } = string.Empty;
 
@@ -36,7 +32,7 @@ namespace LeaveManagementAPI.Entities
         public bool IsActive { get; set; } = true;
 
         [Required]
-        public int LeaveCount { get; set; }
+        public int LeaveCount { get; set; } = 15;
 
         public DateTime? DeletedAt { get; set; }
 

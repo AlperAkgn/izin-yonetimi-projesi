@@ -38,6 +38,10 @@ namespace LeaveManagementAPI.Data
                 .HasConversion<string>()
                 .HasMaxLength(32);
 
+            modelBuilder.Entity<Workplace>()
+                .Property(w => w.LeaveCount)
+                .HasDefaultValue(15);
+
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
                 foreach (var property in entityType.GetProperties())

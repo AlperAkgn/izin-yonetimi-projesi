@@ -3,6 +3,7 @@ using System;
 using LeaveManagementAPI.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LeaveManagementAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260717105752_SetDefaultWorkplaceLeaveCount")]
+    partial class SetDefaultWorkplaceLeaveCount
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -156,10 +159,6 @@ namespace LeaveManagementAPI.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
                         .HasColumnName("password");
-
-                    b.Property<DateTime?>("TempPasswordUsedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("tempPasswordUsedAt");
 
                     b.Property<string>("Role")
                         .IsRequired()

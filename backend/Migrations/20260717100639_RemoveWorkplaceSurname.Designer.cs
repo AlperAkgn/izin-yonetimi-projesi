@@ -3,6 +3,7 @@ using System;
 using LeaveManagementAPI.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 
@@ -11,9 +12,11 @@ using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 namespace LeaveManagementAPI.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260717100639_RemoveWorkplaceSurname")]
+    partial class RemoveWorkplaceSurname
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -157,10 +160,6 @@ namespace LeaveManagementAPI.Migrations
                         .HasColumnType("character varying(512)")
                         .HasColumnName("password");
 
-                    b.Property<DateTime?>("TempPasswordUsedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("tempPasswordUsedAt");
-
                     b.Property<string>("Role")
                         .IsRequired()
                         .HasMaxLength(32)
@@ -226,9 +225,7 @@ namespace LeaveManagementAPI.Migrations
                         .HasColumnName("isActive");
 
                     b.Property<int>("LeaveCount")
-                        .ValueGeneratedOnAdd()
                         .HasColumnType("integer")
-                        .HasDefaultValue(15)
                         .HasColumnName("leaveCount");
 
                     b.Property<string>("Mail")

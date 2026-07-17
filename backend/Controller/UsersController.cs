@@ -41,7 +41,7 @@ namespace LeaveManagementAPI.Controller
 
             if (!TryParseAllowedRole(request.Role, out var role))
             {
-                return BadRequest(new { message = "Role yalnizca EMPLOYEE veya HR olabilir." });
+                return BadRequest(new { message = "Role yalnizca EMPLOYEE, HR veya ADMIN olabilir." });
             }
 
             var normalizedMail = request.Mail.Trim().ToLowerInvariant();
@@ -106,7 +106,7 @@ namespace LeaveManagementAPI.Controller
                 return false;
             }
 
-            if (parsedRole is not (UserRole.EMPLOYEE or UserRole.HR))
+            if (parsedRole is not (UserRole.EMPLOYEE or UserRole.HR or UserRole.ADMIN))
             {
                 return false;
             }
