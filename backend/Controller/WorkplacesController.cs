@@ -82,7 +82,8 @@ namespace LeaveManagementAPI.Controller
                 return auth.ErrorResult;
             }
 
-            if (!await HasWorkplaceAccess(id, auth.AdminId))
+            var workplace = await GetAccessibleWorkplace(id, auth.AdminId);
+            if (workplace is null)
             {
                 return NotFound(new { message = "Is yeri bulunamadi." });
             }
@@ -133,7 +134,8 @@ namespace LeaveManagementAPI.Controller
                 _context.UserWorkplaces.Add(new UserWorkplace
                 {
                     UserId = user.Id,
-                    WorkplaceId = id
+                    WorkplaceId = id,
+                    AnnualLeaveCount = request.AnnualLeaveCount ?? workplace.LeaveCount
                 });
                 await _context.SaveChangesAsync(cancellationToken);
 
@@ -155,7 +157,41 @@ namespace LeaveManagementAPI.Controller
                 });
             }
 
-            return Created($"/api/workplaces/{id}/users/{user.Id}", ToUserResponse(user));
+            return Created(
+                $"/api/workplaces/{id}/users/{user.Id}",
+                ToUserResponse(user, request.AnnualLeaveCount ?? workplace.LeaveCount));
+        }
+
+        [HttpPut("{id:long}/users/{userId:long}/annual-leave-count")]
+        public async Task<ActionResult<WorkplaceUserResponse>> UpdateUserAnnualLeaveCount(
+            long id,
+            long userId,
+            UpdateWorkplaceUserLeaveCountRequest request,
+            CancellationToken cancellationToken)
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            if (!await HasWorkplaceAccess(id, auth.AdminId))
+            {
+                return NotFound(new { message = "Is yeri bulunamadi." });
+            }
+
+            var userWorkplace = await _context.UserWorkplaces
+                .Include(mapping => mapping.User)
+                .SingleOrDefaultAsync(mapping => mapping.UserId == userId && mapping.WorkplaceId == id, cancellationToken);
+            if (userWorkplace is null || !userWorkplace.User.IsActive)
+            {
+                return NotFound(new { message = "Kullanici bu is yerinde bulunamadi." });
+            }
+
+            userWorkplace.AnnualLeaveCount = request.AnnualLeaveCount;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return Ok(ToUserResponse(userWorkplace.User, userWorkplace.AnnualLeaveCount));
         }
 
 
@@ -205,7 +241,8 @@ namespace LeaveManagementAPI.Controller
             _context.UserWorkplaces.Add(new UserWorkplace
             {
                 UserId = auth.AdminId,
-                WorkplaceId = workplace.Id
+                WorkplaceId = workplace.Id,
+                AnnualLeaveCount = workplace.LeaveCount
             });
             await _context.SaveChangesAsync();
             await transaction.CommitAsync();
@@ -425,7 +462,7 @@ namespace LeaveManagementAPI.Controller
             };
         }
 
-        private static WorkplaceUserResponse ToUserResponse(User user)
+        private static WorkplaceUserResponse ToUserResponse(User user, int annualLeaveCount)
         {
             return new WorkplaceUserResponse
             {
@@ -434,7 +471,8 @@ namespace LeaveManagementAPI.Controller
                 Name = user.Name,
                 Surname = user.Surname,
                 Role = user.Role.ToString(),
-                IsActive = user.IsActive
+                IsActive = user.IsActive,
+                AnnualLeaveCount = annualLeaveCount
             };
         }
     }

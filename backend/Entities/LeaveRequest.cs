@@ -34,7 +34,13 @@ namespace LeaveManagementAPI.Entities
 
         [Required]
         public LeaveStatus Status { get; set; } = LeaveStatus.PENDING;
-                
+
+        [Required]
+        public int ChargedLeaveDays { get; set; }
+
+        [MaxLength(500)]
+        public string? RejectionReason { get; set; }
+
         public DateTime? DeletedAt { get; set; }
 
         [ForeignKey(nameof(UserId))]

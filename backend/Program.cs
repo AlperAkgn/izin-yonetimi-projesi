@@ -19,6 +19,7 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.Configure<MailSettings>(
     builder.Configuration.GetSection(MailSettings.SectionName));
 builder.Services.AddScoped<IMailService, MailService>();
+builder.Services.AddScoped<ILeaveDayCalculator, LeaveDayCalculator>();
 
 // Controllers with JSON options
 builder.Services.AddControllers()
