@@ -1,9 +1,10 @@
 using System.IdentityModel.Tokens.Jwt;
-using BCrypt.Net;
+using System.Security.Cryptography;
 using LeaveManagementAPI.Data;
 using LeaveManagementAPI.Entities;
 using LeaveManagementAPI.Enums;
 using LeaveManagementAPI.Models.Workplaces;
+using LeaveManagementAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -15,16 +16,20 @@ namespace LeaveManagementAPI.Controller
     [Authorize(Roles = "ADMIN")]
     public class WorkplacesController : ControllerBase
     {
-        private const string DefaultInitialPassword = "123456";
         private const int DefaultLeaveCount = 15;
 
         private readonly AppDbContext _context;
-        private readonly IConfiguration _configuration;
+        private readonly IMailService _mailService;
+        private readonly ILogger<WorkplacesController> _logger;
 
-        public WorkplacesController(AppDbContext context, IConfiguration configuration)
+        public WorkplacesController(
+            AppDbContext context,
+            IMailService mailService,
+            ILogger<WorkplacesController> logger)
         {
             _context = context;
-            _configuration = configuration;
+            _mailService = mailService;
+            _logger = logger;
         }
 
 
@@ -66,7 +71,10 @@ namespace LeaveManagementAPI.Controller
         }
 
         [HttpPost("{id:long}/users")]
-        public async Task<ActionResult<WorkplaceUserResponse>> CreateUser(long id, CreateWorkplaceUserRequest request)
+        public async Task<ActionResult<WorkplaceUserResponse>> CreateUser(
+            long id,
+            CreateWorkplaceUserRequest request,
+            CancellationToken cancellationToken)
         {
             var auth = await GetActiveAdminOrError();
             if (auth.ErrorResult is not null)
@@ -101,30 +109,51 @@ namespace LeaveManagementAPI.Controller
                 return Conflict(new { message = "Bu e-posta adresiyle kayitli bir kullanici zaten var." });
             }
 
-            await using var transaction = await _context.Database.BeginTransactionAsync();
+            var temporaryPassword = CreateTemporaryPassword();
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
             var user = new User
             {
                 Mail = normalizedMail,
                 Name = request.Name.Trim(),
                 Surname = request.Surname.Trim(),
                 Role = role,
-                Password = BCrypt.Net.BCrypt.HashPassword(GetInitialPassword()),
+                Password = BCrypt.Net.BCrypt.HashPassword(temporaryPassword),
                 IsActive = true,
                 IsTempPassword = true,
+                TempPasswordUsedAt = null,
                 StartAt = request.StartAt?.ToUniversalTime() ?? DateTime.UtcNow,
                 DeletedAt = null
             };
 
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
-
-            _context.UserWorkplaces.Add(new UserWorkplace
+            try
             {
-                UserId = user.Id,
-                WorkplaceId = id
-            });
-            await _context.SaveChangesAsync();
-            await transaction.CommitAsync();
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync(cancellationToken);
+
+                _context.UserWorkplaces.Add(new UserWorkplace
+                {
+                    UserId = user.Id,
+                    WorkplaceId = id
+                });
+                await _context.SaveChangesAsync(cancellationToken);
+
+                await _mailService.SendTemporaryPasswordAsync(
+                    user.Mail,
+                    user.Name,
+                    temporaryPassword,
+                    cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                _logger.LogError(exception, "Kullanici is yerine eklenirken gecici sifre e-postasi gonderilemedi.");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    message = "Gecici sifre e-postasi gonderilemedi. Kullanici is yerine eklenmedi."
+                });
+            }
 
             return Created($"/api/workplaces/{id}/users/{user.Id}", ToUserResponse(user));
         }
@@ -278,12 +307,41 @@ namespace LeaveManagementAPI.Controller
             return true;
         }
 
-        private string GetInitialPassword()
+        private static string CreateTemporaryPassword()
         {
-            var configuredPassword = _configuration["UserDefaults:InitialPassword"];
-            return string.IsNullOrWhiteSpace(configuredPassword)
-                ? DefaultInitialPassword
-                : configuredPassword;
+            const string uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+            const string lowercase = "abcdefghijkmnopqrstuvwxyz";
+            const string digits = "23456789";
+            const string symbols = "!@#$%*-_";
+            const string allCharacters = uppercase + lowercase + digits + symbols;
+
+            var passwordCharacters = new[]
+            {
+                GetRandomCharacter(uppercase),
+                GetRandomCharacter(lowercase),
+                GetRandomCharacter(digits),
+                GetRandomCharacter(symbols)
+            };
+
+            Array.Resize(ref passwordCharacters, 12);
+            for (var index = 4; index < passwordCharacters.Length; index++)
+            {
+                passwordCharacters[index] = GetRandomCharacter(allCharacters);
+            }
+
+            for (var index = passwordCharacters.Length - 1; index > 0; index--)
+            {
+                var swapIndex = RandomNumberGenerator.GetInt32(index + 1);
+                (passwordCharacters[index], passwordCharacters[swapIndex]) =
+                    (passwordCharacters[swapIndex], passwordCharacters[index]);
+            }
+
+            return new string(passwordCharacters);
+        }
+
+        private static char GetRandomCharacter(string characters)
+        {
+            return characters[RandomNumberGenerator.GetInt32(characters.Length)];
         }
 
         private async Task<(long AdminId, ActionResult? ErrorResult)> GetActiveAdminOrError()
