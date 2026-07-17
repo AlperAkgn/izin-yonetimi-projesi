@@ -70,6 +70,32 @@ namespace LeaveManagementAPI.Controller
             return Ok(ToResponse(workplace));
         }
 
+        [HttpGet("{id:long}/users")]
+        public async Task<ActionResult<IEnumerable<WorkplaceUserResponse>>> GetUsers(long id)
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            if (!await HasWorkplaceAccess(id, auth.AdminId))
+            {
+                return NotFound(new { message = "Is yeri bulunamadi." });
+            }
+
+            var users = await _context.Users
+                .Where(u => u.IsActive
+                    && (u.Role == UserRole.HR || u.Role == UserRole.EMPLOYEE)
+                    && u.UserWorkplaces.Any(uw => uw.WorkplaceId == id))
+                .OrderBy(u => u.Name)
+                .ThenBy(u => u.Surname)
+                .Select(u => ToUserResponse(u))
+                .ToListAsync();
+
+            return Ok(users);
+        }
+
         [HttpPost("{id:long}/users")]
         public async Task<ActionResult<WorkplaceUserResponse>> CreateUser(
             long id,
