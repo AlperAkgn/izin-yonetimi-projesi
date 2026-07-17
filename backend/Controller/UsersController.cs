@@ -1,8 +1,9 @@
-using BCrypt.Net;
+using System.Security.Cryptography;
 using LeaveManagementAPI.Data;
 using LeaveManagementAPI.Entities;
 using LeaveManagementAPI.Enums;
 using LeaveManagementAPI.Models.Users;
+using LeaveManagementAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -13,20 +14,23 @@ namespace LeaveManagementAPI.Controller
     [Route("api/[controller]")]
     public class UsersController : ControllerBase
     {
-        private const string DefaultInitialPassword = "123456";
-
         private readonly AppDbContext _context;
-        private readonly IConfiguration _configuration;
+        private readonly IMailService _mailService;
+        private readonly ILogger<UsersController> _logger;
 
-        public UsersController(AppDbContext context, IConfiguration configuration)
+        public UsersController(
+            AppDbContext context,
+            IMailService mailService,
+            ILogger<UsersController> logger)
         {
             _context = context;
-            _configuration = configuration;
+            _mailService = mailService;
+            _logger = logger;
         }
 
         [HttpPost("create")]
         [Authorize(Roles = "ADMIN")]
-        public async Task<ActionResult<UserResponse>> Create(CreateUserRequest request)
+        public async Task<ActionResult<UserResponse>> Create(CreateUserRequest request, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(request.Mail)
                 || string.IsNullOrWhiteSpace(request.Name)
@@ -50,21 +54,44 @@ namespace LeaveManagementAPI.Controller
                 return Conflict(new { message = "Bu e-posta adresiyle kayitli bir kullanici zaten var." });
             }
 
+            var temporaryPassword = CreateTemporaryPassword();
             var user = new User
             {
                 Mail = normalizedMail,
                 Name = request.Name.Trim(),
                 Surname = request.Surname.Trim(),
                 Role = role,
-                Password = BCrypt.Net.BCrypt.HashPassword(GetInitialPassword()),
+                Password = BCrypt.Net.BCrypt.HashPassword(temporaryPassword),
                 IsActive = true,
                 IsTempPassword = true,
+                TempPasswordUsedAt = null,
                 StartAt = request.StartAt?.ToUniversalTime() ?? DateTime.UtcNow,
                 DeletedAt = null
             };
 
-            _context.Users.Add(user);
-            await _context.SaveChangesAsync();
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+            try
+            {
+                _context.Users.Add(user);
+                await _context.SaveChangesAsync(cancellationToken);
+
+                await _mailService.SendTemporaryPasswordAsync(
+                    user.Mail,
+                    user.Name,
+                    temporaryPassword,
+                    cancellationToken);
+
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (Exception exception)
+            {
+                await transaction.RollbackAsync(CancellationToken.None);
+                _logger.LogError(exception, "Kullanici olusturulurken gecici sifre e-postasi gonderilemedi.");
+                return StatusCode(StatusCodes.Status503ServiceUnavailable, new
+                {
+                    message = "Gecici sifre e-postasi gonderilemedi. Kullanici olusturulmadi."
+                });
+            }
 
             return Created($"/api/users/{user.Id}", ToResponse(user));
         }
@@ -88,12 +115,41 @@ namespace LeaveManagementAPI.Controller
             return true;
         }
 
-        private string GetInitialPassword()
+        private static string CreateTemporaryPassword()
         {
-            var configuredPassword = _configuration["UserDefaults:InitialPassword"];
-            return string.IsNullOrWhiteSpace(configuredPassword)
-                ? DefaultInitialPassword
-                : configuredPassword;
+            const string uppercase = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+            const string lowercase = "abcdefghijkmnopqrstuvwxyz";
+            const string digits = "23456789";
+            const string symbols = "!@#$%*-_";
+            const string allCharacters = uppercase + lowercase + digits + symbols;
+
+            var passwordCharacters = new[]
+            {
+                GetRandomCharacter(uppercase),
+                GetRandomCharacter(lowercase),
+                GetRandomCharacter(digits),
+                GetRandomCharacter(symbols)
+            };
+
+            Array.Resize(ref passwordCharacters, 12);
+            for (var index = 4; index < passwordCharacters.Length; index++)
+            {
+                passwordCharacters[index] = GetRandomCharacter(allCharacters);
+            }
+
+            for (var index = passwordCharacters.Length - 1; index > 0; index--)
+            {
+                var swapIndex = RandomNumberGenerator.GetInt32(index + 1);
+                (passwordCharacters[index], passwordCharacters[swapIndex]) =
+                    (passwordCharacters[swapIndex], passwordCharacters[index]);
+            }
+
+            return new string(passwordCharacters);
+        }
+
+        private static char GetRandomCharacter(string characters)
+        {
+            return characters[RandomNumberGenerator.GetInt32(characters.Length)];
         }
 
         private static UserResponse ToResponse(User user)
