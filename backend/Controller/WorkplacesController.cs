@@ -17,6 +17,8 @@ namespace LeaveManagementAPI.Controller
     public class WorkplacesController : ControllerBase
     {
         private const int DefaultLeaveCount = 15;
+        private const int DefaultPageSize = 10;
+        private const int MaxPageSize = 100;
 
         private readonly AppDbContext _context;
         private readonly IMailService _mailService;
@@ -71,7 +73,10 @@ namespace LeaveManagementAPI.Controller
         }
 
         [HttpGet("{id:long}/users")]
-        public async Task<ActionResult<IEnumerable<WorkplaceUserResponse>>> GetUsers(long id)
+        public async Task<ActionResult<PagedWorkplaceUsersResponse>> GetUsers(
+            long id,
+            [FromQuery] int page = 1,
+            [FromQuery] int pageSize = DefaultPageSize)
         {
             var auth = await GetActiveAdminOrError();
             if (auth.ErrorResult is not null)
@@ -84,16 +89,31 @@ namespace LeaveManagementAPI.Controller
                 return NotFound(new { message = "Is yeri bulunamadi." });
             }
 
-            var users = await _context.Users
+            page = Math.Max(page, 1);
+            pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
+
+            var query = _context.Users
                 .Where(u => u.IsActive
                     && (u.Role == UserRole.HR || u.Role == UserRole.EMPLOYEE)
                     && u.UserWorkplaces.Any(uw => uw.WorkplaceId == id))
                 .OrderBy(u => u.Name)
-                .ThenBy(u => u.Surname)
+                .ThenBy(u => u.Surname);
+
+            var totalCount = await query.CountAsync();
+            var users = await query
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
                 .Select(u => ToUserResponse(u))
                 .ToListAsync();
 
-            return Ok(users);
+            return Ok(new PagedWorkplaceUsersResponse
+            {
+                Page = page,
+                PageSize = pageSize,
+                TotalCount = totalCount,
+                TotalPages = (int)Math.Ceiling(totalCount / (double)pageSize),
+                Items = users
+            });
         }
 
         [HttpPost("{id:long}/users")]
