@@ -4,6 +4,8 @@ using LeaveManagementAPI.Models.PublicHolidays;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using Nager.Date;
+using Nager.Date.Models;
 
 namespace LeaveManagementAPI.Controller
 {
@@ -39,6 +41,21 @@ namespace LeaveManagementAPI.Controller
                 .OrderBy(holiday => holiday.Date)
                 .Select(holiday => ToResponse(holiday))
                 .ToListAsync();
+
+            if (year is not null)
+            {
+                var existingDates = response.Select(item => item.Date.Date).ToHashSet();
+                response.AddRange(HolidaySystem.GetHolidays(year.Value, CountryCode.TR)
+                    .Where(holiday => existingDates.Add(holiday.Date.Date))
+                    .Select(holiday => new PublicHolidayResponse
+                    {
+                        Id = 0,
+                        Date = DateTime.SpecifyKind(holiday.Date.Date, DateTimeKind.Utc),
+                        Name = holiday.LocalName
+                    }));
+
+                response = response.OrderBy(item => item.Date).ToList();
+            }
 
             return Ok(response);
         }

@@ -1,5 +1,7 @@
 using LeaveManagementAPI.Data;
 using Microsoft.EntityFrameworkCore;
+using Nager.Date;
+using Nager.Date.Models;
 
 namespace LeaveManagementAPI.Services
 {
@@ -41,6 +43,13 @@ namespace LeaveManagementAPI.Services
             var holidayDates = publicHolidays
                 .Select(holiday => holiday.Date)
                 .ToHashSet();
+
+            // Turkiye'nin resmi tatillerini Nager.Date takviminden otomatik olarak ekle.
+            // Veritabanindaki kayitlar kurum tarafindan eklenen ilave tatiller olarak korunur.
+            foreach (var holiday in HolidaySystem.GetHolidays(start, end, CountryCode.TR))
+            {
+                holidayDates.Add(holiday.Date.Date);
+            }
 
             var chargeableDaysByYear = new Dictionary<int, int>();
             for (var date = start; date <= end; date = date.AddDays(1))
