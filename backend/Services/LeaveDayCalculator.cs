@@ -1,5 +1,3 @@
-using LeaveManagementAPI.Data;
-using Microsoft.EntityFrameworkCore;
 using Nager.Date;
 using Nager.Date.Models;
 
@@ -7,13 +5,6 @@ namespace LeaveManagementAPI.Services
 {
     public sealed class LeaveDayCalculator : ILeaveDayCalculator
     {
-        private readonly AppDbContext _context;
-
-        public LeaveDayCalculator(AppDbContext context)
-        {
-            _context = context;
-        }
-
         public async Task<int> CalculateChargeableDaysAsync(
             DateTime startDate,
             DateTime endDate,
@@ -23,7 +14,7 @@ namespace LeaveManagementAPI.Services
             return daysByYear.Values.Sum();
         }
 
-        public async Task<IReadOnlyDictionary<int, int>> CalculateChargeableDaysByYearAsync(
+        public Task<IReadOnlyDictionary<int, int>> CalculateChargeableDaysByYearAsync(
             DateTime startDate,
             DateTime endDate,
             CancellationToken cancellationToken = default)
@@ -32,24 +23,12 @@ namespace LeaveManagementAPI.Services
             var end = endDate.Date;
             if (end < start)
             {
-                return new Dictionary<int, int>();
+                return Task.FromResult<IReadOnlyDictionary<int, int>>(new Dictionary<int, int>());
             }
 
-            var publicHolidays = await _context.PublicHolidays
-                .Where(holiday => holiday.Date >= start && holiday.Date <= end)
-                .Select(holiday => holiday.Date)
-                .ToListAsync(cancellationToken);
-
-            var holidayDates = publicHolidays
-                .Select(holiday => holiday.Date)
+            var holidayDates = HolidaySystem.GetHolidays(start, end, CountryCode.TR)
+                .Select(holiday => holiday.Date.Date)
                 .ToHashSet();
-
-            // Turkiye'nin resmi tatillerini Nager.Date takviminden otomatik olarak ekle.
-            // Veritabanindaki kayitlar kurum tarafindan eklenen ilave tatiller olarak korunur.
-            foreach (var holiday in HolidaySystem.GetHolidays(start, end, CountryCode.TR))
-            {
-                holidayDates.Add(holiday.Date.Date);
-            }
 
             var chargeableDaysByYear = new Dictionary<int, int>();
             for (var date = start; date <= end; date = date.AddDays(1))
@@ -67,7 +46,7 @@ namespace LeaveManagementAPI.Services
                 chargeableDaysByYear[date.Year] = chargeableDaysByYear.GetValueOrDefault(date.Year) + 1;
             }
 
-            return chargeableDaysByYear;
+            return Task.FromResult<IReadOnlyDictionary<int, int>>(chargeableDaysByYear);
         }
     }
 }
