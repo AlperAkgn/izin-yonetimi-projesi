@@ -19,6 +19,9 @@ namespace LeaveManagementAPI.Models.Workplaces
         [Required]
         public string Role { get; set; } = string.Empty;
 
+        [Range(0, int.MaxValue)]
+        public int? AnnualLeaveCount { get; set; }
+
         public DateTime? StartAt { get; set; }
     }
 }

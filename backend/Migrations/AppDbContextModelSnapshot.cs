@@ -31,6 +31,10 @@ namespace LeaveManagementAPI.Migrations
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
 
+                    b.Property<int>("ChargedLeaveDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("chargedLeaveDays");
+
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deletedAt");
@@ -44,6 +48,11 @@ namespace LeaveManagementAPI.Migrations
                         .HasMaxLength(200)
                         .HasColumnType("character varying(200)")
                         .HasColumnName("emergencyContact");
+
+                    b.Property<string>("RejectionReason")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("rejectionReason");
 
                     b.Property<DateTime>("EndDate")
                         .HasColumnType("timestamp with time zone")
@@ -80,6 +89,33 @@ namespace LeaveManagementAPI.Migrations
                     b.HasIndex("WorkplaceId");
 
                     b.ToTable("LeaveRequest");
+                });
+
+            modelBuilder.Entity("LeaveManagementAPI.Entities.PublicHoliday", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTime>("Date")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("date");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)")
+                        .HasColumnName("name");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Date")
+                        .IsUnique();
+
+                    b.ToTable("PublicHoliday");
                 });
 
             modelBuilder.Entity("LeaveManagementAPI.Entities.LeaveRequestAudit", b =>
@@ -187,6 +223,12 @@ namespace LeaveManagementAPI.Migrations
 
             modelBuilder.Entity("LeaveManagementAPI.Entities.UserWorkplace", b =>
                 {
+                    b.Property<int>("AnnualLeaveCount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer")
+                        .HasDefaultValue(15)
+                        .HasColumnName("annualLeaveCount");
+
                     b.Property<long>("UserId")
                         .HasColumnType("bigint")
                         .HasColumnName("userId");

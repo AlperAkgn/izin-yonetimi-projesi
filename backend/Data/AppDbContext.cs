@@ -15,6 +15,7 @@ namespace LeaveManagementAPI.Data
         public DbSet<LeaveRequest> LeaveRequests { get; set; }
         public DbSet<LeaveRequestAudit> LeaveRequestAudits { get; set; }
         public DbSet<UserWorkplace> UserWorkplaces { get; set; }
+        public DbSet<PublicHoliday> PublicHolidays { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
@@ -41,6 +42,14 @@ namespace LeaveManagementAPI.Data
             modelBuilder.Entity<Workplace>()
                 .Property(w => w.LeaveCount)
                 .HasDefaultValue(15);
+
+            modelBuilder.Entity<UserWorkplace>()
+                .Property(mapping => mapping.AnnualLeaveCount)
+                .HasDefaultValue(15);
+
+            modelBuilder.Entity<PublicHoliday>()
+                .HasIndex(holiday => holiday.Date)
+                .IsUnique();
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())
             {
