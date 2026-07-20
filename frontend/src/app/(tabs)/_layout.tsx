@@ -98,6 +98,14 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="branches"
+        options={{
+          title: 'Şubeler',
+          drawerIcon: ({ color, size }) => <Feather name="map-pin" size={size} color={color} />,
+          drawerItemStyle: user?.role === 'ADMIN' ? undefined : { display: 'none' },
+        }}
+      />
+      <Drawer.Screen
         name="reports"
         options={{
           title: 'Raporlar',
