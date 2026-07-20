@@ -208,38 +208,6 @@ namespace LeaveManagementAPI.Controller
                 ToUserResponse(user, request.AnnualLeaveCount ?? workplace.LeaveCount));
         }
 
-        [HttpPut("{id:long}/users/{userId:long}/annual-leave-count")]
-        public async Task<ActionResult<WorkplaceUserResponse>> UpdateUserAnnualLeaveCount(
-            long id,
-            long userId,
-            UpdateWorkplaceUserLeaveCountRequest request,
-            CancellationToken cancellationToken)
-        {
-            var auth = await GetActiveAdminOrError();
-            if (auth.ErrorResult is not null)
-            {
-                return auth.ErrorResult;
-            }
-
-            if (!await HasWorkplaceAccess(id, auth.AdminId))
-            {
-                return NotFound(new { message = "Is yeri bulunamadi." });
-            }
-
-            var userWorkplace = await _context.UserWorkplaces
-                .Include(mapping => mapping.User)
-                .SingleOrDefaultAsync(mapping => mapping.UserId == userId && mapping.WorkplaceId == id, cancellationToken);
-            if (userWorkplace is null || !userWorkplace.User.IsActive)
-            {
-                return NotFound(new { message = "Kullanici bu is yerinde bulunamadi." });
-            }
-
-            userWorkplace.AnnualLeaveCount = request.AnnualLeaveCount;
-            await _context.SaveChangesAsync(cancellationToken);
-
-            return Ok(ToUserResponse(userWorkplace.User, userWorkplace.AnnualLeaveCount));
-        }
-
 
         [HttpPost]
         public async Task<ActionResult<WorkplaceResponse>> Create(CreateWorkplaceRequest request)
@@ -469,17 +437,6 @@ namespace LeaveManagementAPI.Controller
                 .AnyAsync(w => w.Id == id && w.UserWorkplaces.Any(uw => uw.UserId == currentAdminId));
         }
 
-        private Task<List<WorkplaceAdminResponse>> GetMappedAdmins(long workplaceId)
-        {
-            return _context.Users
-                .Where(u => u.Role == UserRole.ADMIN
-                    && u.IsActive
-                    && u.UserWorkplaces.Any(uw => uw.WorkplaceId == workplaceId))
-                .OrderBy(u => u.Name)
-                .ThenBy(u => u.Surname)
-                .Select(u => ToAdminResponse(u))
-                .ToListAsync();
-        }
 
         private static WorkplaceResponse ToResponse(Workplace workplace)
         {
@@ -492,19 +449,6 @@ namespace LeaveManagementAPI.Controller
                 Mail = workplace.Mail,
                 IsActive = workplace.IsActive,
                 LeaveCount = workplace.LeaveCount
-            };
-        }
-
-        private static WorkplaceAdminResponse ToAdminResponse(User user)
-        {
-            return new WorkplaceAdminResponse
-            {
-                Id = user.Id,
-                Mail = user.Mail,
-                Name = user.Name,
-                Surname = user.Surname,
-                Role = user.Role.ToString(),
-                IsActive = user.IsActive
             };
         }
 
