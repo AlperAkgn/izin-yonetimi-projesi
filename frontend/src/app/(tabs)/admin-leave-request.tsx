@@ -14,10 +14,15 @@ const LEAVE_TYPES = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'] as const;
 type LeaveType = (typeof LEAVE_TYPES)[number];
 
 const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function isValidPhone(phone: string) {
   const cleaned = phone.replace(/[\s()-]/g, '');
   return PHONE_REGEX.test(cleaned);
+}
+
+function isValidEmail(email: string) {
+  return EMAIL_REGEX.test(email.trim());
 }
 
 function countNetWeekdays(start: Date, end: Date) {
@@ -32,15 +37,22 @@ function countNetWeekdays(start: Date, end: Date) {
   return count;
 }
 
-export default function LeaveRequestsScreen() {
+export default function AdminLeaveRequestScreen() {
   const { colors } = useDesign();
 
+  // Çalışan bilgileri
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [branch, setBranch] = useState('');
+  const [phone, setPhone] = useState('');
+  const [email, setEmail] = useState('');
+
+  // İzin bilgileri
   const [selectedType, setSelectedType] = useState<LeaveType>('Yıllık');
   const [startDate, setStartDate] = useState(new Date());
   const [endDate, setEndDate] = useState(new Date());
-  const [description, setDescription] = useState('');
-  const [emergencyContact, setEmergencyContact] = useState('');
   const [leaveAddress, setLeaveAddress] = useState('');
+
   const [error, setError] = useState('');
 
   const today = new Date();
@@ -48,15 +60,40 @@ export default function LeaveRequestsScreen() {
   const netDays = countNetWeekdays(startDate, endDate);
 
   const resetForm = () => {
+    setFirstName('');
+    setLastName('');
+    setBranch('');
+    setPhone('');
+    setEmail('');
     setSelectedType('Yıllık');
     setStartDate(new Date());
     setEndDate(new Date());
-    setDescription('');
-    setEmergencyContact('');
     setLeaveAddress('');
+    setError('');
   };
 
   const handleSubmit = () => {
+    if (firstName.trim().length === 0) {
+      setError('İsim alanı boş bırakılamaz');
+      return;
+    }
+    if (lastName.trim().length === 0) {
+      setError('Soyisim alanı boş bırakılamaz');
+      return;
+    }
+    if (branch.trim().length === 0) {
+      setError('Şube alanı boş bırakılamaz');
+      return;
+    }
+    if (!isValidPhone(phone)) {
+      setError('Geçerli bir telefon numarası gir (örn: 05XX XXX XX XX)');
+      return;
+    }
+    if (!isValidEmail(email)) {
+      setError('Geçerli bir e-posta adresi gir');
+      return;
+    }
+
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
 
@@ -68,40 +105,119 @@ export default function LeaveRequestsScreen() {
       setError('Bitiş tarihi başlangıçtan önce olamaz');
       return;
     }
-    if (description.trim().length === 0) {
-      setError('Açıklama boş bırakılamaz');
-      return;
-    }
-    if (!isValidPhone(emergencyContact)) {
-      setError('Geçerli bir telefon numarası gir (örn: 05XX XXX XX XX)');
-      return;
-    }
     if (leaveAddress.trim().length === 0) {
-      setError('İzinde bulunacağınız adres boş bırakılamaz');
+      setError('İzinde bulunacağı adres boş bırakılamaz');
       return;
     }
+
     setError('');
 
-    console.log('İzin talebi:', {
-      type: selectedType,
-      startDate,
-      endDate,
-      netDays,
-      description,
-      emergencyContact,
-      leaveAddress: leaveAddress.trim(),
+    console.log('Admin izin talebi:', {
+      employee: {
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        branch: branch.trim(),
+        phone: phone.trim(),
+        email: email.trim(),
+      },
+      leave: {
+        type: selectedType,
+        startDate,
+        endDate,
+        netDays,
+        leaveAddress: leaveAddress.trim(),
+      },
     });
 
-    showAlert('Talep oluşturuldu', 'İzin talebin başarıyla oluşturuldu.', resetForm);
+    showAlert(
+      'Talep oluşturuldu',
+      `${firstName.trim()} ${lastName.trim()} adına izin talebi başarıyla oluşturuldu.`,
+      resetForm,
+    );
   };
 
   return (
     <Screen>
       <ThemedText type="title" style={styles.pageTitle}>
-        Yeni İzin Talebi
+        Çalışan İzin Yaz
       </ThemedText>
 
+      {/* Çalışan Bilgileri */}
       <Card>
+        <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>
+          Çalışan Bilgileri
+        </ThemedText>
+
+        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İsim</ThemedText>
+        <TextInput
+          style={[
+            styles.input,
+            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+          ]}
+          placeholder="Çalışanın adı"
+          placeholderTextColor={colors.textFaint}
+          value={firstName}
+          onChangeText={setFirstName}
+        />
+
+        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Soyisim</ThemedText>
+        <TextInput
+          style={[
+            styles.input,
+            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+          ]}
+          placeholder="Çalışanın soyadı"
+          placeholderTextColor={colors.textFaint}
+          value={lastName}
+          onChangeText={setLastName}
+        />
+
+        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Şube</ThemedText>
+        <TextInput
+          style={[
+            styles.input,
+            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+          ]}
+          placeholder="Şube adı"
+          placeholderTextColor={colors.textFaint}
+          value={branch}
+          onChangeText={setBranch}
+        />
+
+        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Telefon Numarası</ThemedText>
+        <TextInput
+          style={[
+            styles.input,
+            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+          ]}
+          placeholder="05XX XXX XX XX"
+          placeholderTextColor={colors.textFaint}
+          keyboardType="phone-pad"
+          value={phone}
+          onChangeText={setPhone}
+        />
+
+        <ThemedText style={[styles.label, { color: colors.textMuted }]}>E-posta Adresi</ThemedText>
+        <TextInput
+          style={[
+            styles.input,
+            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+          ]}
+          placeholder="ornek@firma.com"
+          placeholderTextColor={colors.textFaint}
+          keyboardType="email-address"
+          autoCapitalize="none"
+          value={email}
+          onChangeText={setEmail}
+        />
+      </Card>
+
+      {/* İzin Bilgileri */}
+      <Card>
+        <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>
+          İzin Bilgileri
+        </ThemedText>
+
         <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzin kategorisi</ThemedText>
         <View style={styles.chipRow}>
           {LEAVE_TYPES.map((type) => {
@@ -149,49 +265,26 @@ export default function LeaveRequestsScreen() {
 
         <View style={[styles.netDaysBox, { backgroundColor: colors.primarySoft }]}>
           <ThemedText style={[styles.netDaysText, { color: colors.primary }]}>
-            Hafta sonları hariç net {netDays} gün düşülecek
+            Hafta sonları hariç toplam {netDays} gün
           </ThemedText>
         </View>
 
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Açıklama</ThemedText>
+        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzinde Bulunacağı Adres</ThemedText>
         <TextInput
           style={[
             styles.textArea,
             { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
           ]}
-          placeholder="İzin sebebini kısaca yaz"
-          placeholderTextColor={colors.textFaint}
-          multiline
-          value={description}
-          onChangeText={setDescription}
-        />
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Acil durum iletişim</ThemedText>
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="05XX XXX XX XX"
-          placeholderTextColor={colors.textFaint}
-          keyboardType="phone-pad"
-          value={emergencyContact}
-          onChangeText={setEmergencyContact}
-        />
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzinde Bulunacağınız Adres</ThemedText>
-        <TextInput
-          style={[
-            styles.textArea,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="İzin süresince bulunacağınız adres"
+          placeholder="İzin süresince bulunacağı adres"
           placeholderTextColor={colors.textFaint}
           multiline
           value={leaveAddress}
           onChangeText={setLeaveAddress}
         />
+      </Card>
 
+      {/* Hata mesajı ve gönder butonu */}
+      <Card>
         {error !== '' && (
           <ThemedText style={[styles.error, { color: colors.danger }]}>{error}</ThemedText>
         )}
@@ -203,7 +296,6 @@ export default function LeaveRequestsScreen() {
 }
 
 const styles = StyleSheet.create({
-
   error: {
     fontSize: 13,
     marginTop: Space.sm,
@@ -212,6 +304,11 @@ const styles = StyleSheet.create({
   pageTitle: {
     marginTop: Space.sm,
     marginBottom: Space.md,
+  },
+  sectionTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    marginBottom: Space.xs,
   },
   label: {
     fontSize: 13,
