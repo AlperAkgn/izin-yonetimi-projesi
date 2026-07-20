@@ -19,6 +19,11 @@ builder.Services.AddDbContext<AppDbContext>(options =>
 builder.Services.Configure<MailSettings>(
     builder.Configuration.GetSection(MailSettings.SectionName));
 builder.Services.AddScoped<IMailService, MailService>();
+builder.Services.AddHttpClient<IPublicHolidayService, PublicHolidayService>(client =>
+{
+    client.BaseAddress = new Uri("https://date.nager.at/");
+    client.Timeout = TimeSpan.FromSeconds(15);
+});
 builder.Services.AddScoped<ILeaveDayCalculator, LeaveDayCalculator>();
 
 // Controllers with JSON options

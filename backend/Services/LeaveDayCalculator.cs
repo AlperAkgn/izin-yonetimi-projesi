@@ -1,9 +1,6 @@
-using Nager.Date;
-using Nager.Date.Models;
-
 namespace LeaveManagementAPI.Services
 {
-    public sealed class LeaveDayCalculator : ILeaveDayCalculator
+    public sealed class LeaveDayCalculator(IPublicHolidayService publicHolidayService) : ILeaveDayCalculator
     {
         public async Task<int> CalculateChargeableDaysAsync(
             DateTime startDate,
@@ -14,7 +11,7 @@ namespace LeaveManagementAPI.Services
             return daysByYear.Values.Sum();
         }
 
-        public Task<IReadOnlyDictionary<int, int>> CalculateChargeableDaysByYearAsync(
+        public async Task<IReadOnlyDictionary<int, int>> CalculateChargeableDaysByYearAsync(
             DateTime startDate,
             DateTime endDate,
             CancellationToken cancellationToken = default)
@@ -23,11 +20,15 @@ namespace LeaveManagementAPI.Services
             var end = endDate.Date;
             if (end < start)
             {
-                return Task.FromResult<IReadOnlyDictionary<int, int>>(new Dictionary<int, int>());
+                return new Dictionary<int, int>();
             }
 
-            var holidayDates = HolidaySystem.GetHolidays(start, end, CountryCode.TR)
-                .Select(holiday => holiday.Date.Date)
+            var holidaysByYear = await Task.WhenAll(
+                Enumerable.Range(start.Year, end.Year - start.Year + 1)
+                    .Select(year => publicHolidayService.GetTurkishHolidaysAsync(year, cancellationToken)));
+            var holidayDates = holidaysByYear
+                .SelectMany(holidays => holidays)
+                .Select(holiday => holiday.Date.ToDateTime(TimeOnly.MinValue))
                 .ToHashSet();
 
             var chargeableDaysByYear = new Dictionary<int, int>();
@@ -46,7 +47,7 @@ namespace LeaveManagementAPI.Services
                 chargeableDaysByYear[date.Year] = chargeableDaysByYear.GetValueOrDefault(date.Year) + 1;
             }
 
-            return Task.FromResult<IReadOnlyDictionary<int, int>>(chargeableDaysByYear);
+            return chargeableDaysByYear;
         }
     }
 }
