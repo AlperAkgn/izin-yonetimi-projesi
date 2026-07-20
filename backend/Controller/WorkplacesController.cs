@@ -92,18 +92,18 @@ namespace LeaveManagementAPI.Controller
             page = Math.Max(page, 1);
             pageSize = Math.Clamp(pageSize, 1, MaxPageSize);
 
-            var query = _context.Users
-                .Where(u => u.IsActive
-                    && (u.Role == UserRole.HR || u.Role == UserRole.EMPLOYEE)
-                    && u.UserWorkplaces.Any(uw => uw.WorkplaceId == id))
-                .OrderBy(u => u.Name)
-                .ThenBy(u => u.Surname);
+            var query = _context.UserWorkplaces
+                .Where(uw => uw.WorkplaceId == id
+                    && uw.User.IsActive
+                    && (uw.User.Role == UserRole.HR || uw.User.Role == UserRole.EMPLOYEE))
+                .OrderBy(uw => uw.User.Name)
+                .ThenBy(uw => uw.User.Surname);
 
             var totalCount = await query.CountAsync();
             var users = await query
                 .Skip((page - 1) * pageSize)
                 .Take(pageSize)
-                .Select(u => ToUserResponse(u))
+                .Select(uw => ToUserResponse(uw.User, uw.AnnualLeaveCount))
                 .ToListAsync();
 
             return Ok(new PagedWorkplaceUsersResponse
