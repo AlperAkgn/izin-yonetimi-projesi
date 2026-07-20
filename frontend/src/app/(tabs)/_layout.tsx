@@ -107,6 +107,16 @@ export default function DrawerLayout() {
           drawerItemStyle: canSeeReports ? undefined : { display: 'none' },
         }}
       />
+      <Drawer.Screen
+        name="admin-leave-request"
+        options={{
+          title: 'Çalışan İzin Yaz',
+          drawerIcon: ({ color, size }) => (
+            <Feather name="user-plus" size={size} color={color} />
+          ),
+          drawerItemStyle: user?.role === 'ADMIN' ? undefined : { display: 'none' },
+        }}
+      />
     </Drawer>
   );
 }
