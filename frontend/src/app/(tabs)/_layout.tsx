@@ -106,6 +106,14 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="users"
+        options={{
+          title: 'Kullanıcı Oluştur',
+          drawerIcon: ({ color, size }) => <Feather name="users" size={size} color={color} />,
+          drawerItemStyle: user?.role === 'ADMIN' ? undefined : { display: 'none' },
+        }}
+      />
+      <Drawer.Screen
         name="reports"
         options={{
           title: 'Raporlar',
