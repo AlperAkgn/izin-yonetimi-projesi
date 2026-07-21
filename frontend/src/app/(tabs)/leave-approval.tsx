@@ -3,6 +3,7 @@ import {
   FlatList,
   Modal,
   Pressable,
+  ScrollView,
   StyleSheet,
   TextInput,
   View,
@@ -20,7 +21,9 @@ import {
 } from '@/store/leaveRequestsStore';
 import { showAlert, showConfirm } from '@/utils/alert';
 
-import type { LeaveRequest, LeaveStatus } from '@/store/leaveRequestsStore';
+import type { LeaveRequest, LeaveStatus, LeaveType } from '@/store/leaveRequestsStore';
+
+const LEAVE_TYPES: LeaveType[] = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'];
 
 // ─── Helpers ──────────────────────────────────────────────────────
 type Tab = 'pending' | 'history';
@@ -33,6 +36,8 @@ function statusLabel(status: LeaveStatus): string {
       return '❌ Reddedildi';
     case 'AUTO_APPROVED':
       return '🚨 ACİL - Sistem Tarafından Onaylandı';
+    case 'CANCELED':
+      return '🚫 İptal Edildi';
     default:
       return '⏳ Beklemede';
   }
@@ -46,6 +51,8 @@ function statusColor(status: LeaveStatus): string {
       return Palette.danger;
     case 'AUTO_APPROVED':
       return Palette.danger;
+    case 'CANCELED':
+      return Palette.canceled;
     default:
       return Palette.warning;
   }
@@ -76,6 +83,8 @@ export default function LeaveApprovalScreen() {
   const allRequests = useLeaveRequestsStore((s) => s.requests);
   const approveRequest = useLeaveRequestsStore((s) => s.approveRequest);
   const rejectRequest = useLeaveRequestsStore((s) => s.rejectRequest);
+  const cancelRequest = useLeaveRequestsStore((s) => s.cancelRequest);
+  const updateRequest = useLeaveRequestsStore((s) => s.updateRequest);
 
   // Türetilmiş listeler — tek kaynak (store) üzerinden filtrelenir
   const pendingList = filterPendingRequests(allRequests);
@@ -85,6 +94,14 @@ export default function LeaveApprovalScreen() {
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<LeaveRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+
+  // Edit modal state
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editTarget, setEditTarget] = useState<LeaveRequest | null>(null);
+  const [editLeaveType, setEditLeaveType] = useState<LeaveType>('Yıllık');
+  const [editStartDate, setEditStartDate] = useState('');
+  const [editEndDate, setEditEndDate] = useState('');
+  const [editDescription, setEditDescription] = useState('');
 
   // ── Actions ────────────────────────────────────────────────────
   const handleApprove = (item: LeaveRequest) => {
@@ -128,6 +145,56 @@ export default function LeaveApprovalScreen() {
     );
   };
 
+  // ── Cancel ─────────────────────────────────────────────────────
+  const handleCancel = (item: LeaveRequest) => {
+    showConfirm(
+      'İzin İptali',
+      `${item.firstName} ${item.lastName} adlı çalışanın ${item.leaveType} iznini iptal etmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`,
+      'İptal Et',
+      () => {
+        cancelRequest(item.id);
+        showAlert('İptal Edildi', `${item.firstName} ${item.lastName} adlı çalışanın izni iptal edildi.`);
+      },
+    );
+  };
+
+  // ── Edit Modal ─────────────────────────────────────────────────
+  const openEditModal = (item: LeaveRequest) => {
+    setEditTarget(item);
+    setEditLeaveType(item.leaveType);
+    setEditStartDate(item.startDate);
+    setEditEndDate(item.endDate);
+    setEditDescription(item.description);
+    setEditModalVisible(true);
+  };
+
+  const confirmEdit = () => {
+    if (!editTarget) return;
+    if (editDescription.trim().length === 0) {
+      showAlert('Hata', 'Açıklama boş bırakılamaz.');
+      return;
+    }
+    if (editStartDate.trim().length === 0 || editEndDate.trim().length === 0) {
+      showAlert('Hata', 'Tarih alanları boş bırakılamaz.');
+      return;
+    }
+
+    updateRequest(editTarget.id, {
+      leaveType: editLeaveType,
+      startDate: editStartDate.trim(),
+      endDate: editEndDate.trim(),
+      description: editDescription.trim(),
+    });
+
+    setEditModalVisible(false);
+    setEditTarget(null);
+
+    const msg = editLeaveType === 'Acil'
+      ? 'İzin ACİL olarak güncellendi ve otomatik onaylandı.'
+      : 'İzin talebi başarıyla güncellendi.';
+    showAlert('Güncellendi', msg);
+  };
+
   // ── Card Renderers ─────────────────────────────────────────────
   const renderPendingCard = ({ item }: { item: LeaveRequest }) => (
     <View
@@ -139,6 +206,15 @@ export default function LeaveApprovalScreen() {
         },
         Shadow.card,
       ]}>
+      {/* Updated badge */}
+      {item.updatedAt && (
+        <View style={[styles.updatedBadge, { backgroundColor: `${Palette.primary}14` }]}>
+          <ThemedText style={[styles.updatedBadgeText, { color: Palette.primary }]}>
+            ✏️ Güncellendi — {item.updatedAt}
+          </ThemedText>
+        </View>
+      )}
+
       {/* Header */}
       <View style={styles.cardHeader}>
         <View style={{ flex: 1 }}>
@@ -149,11 +225,21 @@ export default function LeaveApprovalScreen() {
             📍 {item.branch}
           </ThemedText>
         </View>
-        <View style={[styles.typeBadge, { backgroundColor: colors.primarySoft }]}>
-          <ThemedText style={[styles.typeBadgeText, { color: colors.primary }]}>
-            {leaveTypeEmoji(item.leaveType)} {item.leaveType}
-          </ThemedText>
+        <View style={styles.cardHeaderActions}>
+          <Pressable onPress={() => openEditModal(item)} style={[styles.iconBtn, { backgroundColor: `${Palette.primary}14` }]}>
+            <ThemedText style={{ fontSize: 16 }}>✏️</ThemedText>
+          </Pressable>
+          <Pressable onPress={() => handleCancel(item)} style={[styles.iconBtn, { backgroundColor: `${Palette.canceled}14` }]}>
+            <ThemedText style={{ fontSize: 16 }}>🚫</ThemedText>
+          </Pressable>
         </View>
+      </View>
+
+      {/* Leave type badge */}
+      <View style={[styles.typeBadge, { backgroundColor: colors.primarySoft, alignSelf: 'flex-start' }]}>
+        <ThemedText style={[styles.typeBadgeText, { color: colors.primary }]}>
+          {leaveTypeEmoji(item.leaveType)} {item.leaveType}
+        </ThemedText>
       </View>
 
       {/* Date info */}
@@ -177,7 +263,6 @@ export default function LeaveApprovalScreen() {
           onPress={() => handleApprove(item)}
           style={({ pressed }) => [
             styles.actionBtn,
-            styles.approveBtn,
             {
               backgroundColor: pressed ? '#1DA84E' : Palette.success,
             },
@@ -188,7 +273,6 @@ export default function LeaveApprovalScreen() {
           onPress={() => openRejectModal(item)}
           style={({ pressed }) => [
             styles.actionBtn,
-            styles.rejectBtn,
             {
               backgroundColor: pressed ? '#D63A2F' : Palette.danger,
             },
@@ -420,6 +504,104 @@ export default function LeaveApprovalScreen() {
           </View>
         </View>
       </Modal>
+
+      {/* ─── Edit Modal ─────────────────────────────────────────── */}
+      <Modal
+        visible={editModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setEditModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+            <ThemedText style={[styles.modalTitle, { color: colors.text }]}>
+              İzin Düzenle
+            </ThemedText>
+
+            {editTarget && (
+              <ThemedText style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                {editTarget.firstName} {editTarget.lastName} — {editTarget.branch}
+              </ThemedText>
+            )}
+
+            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
+              {/* Leave type chips */}
+              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>İzin Türü</ThemedText>
+              <View style={styles.editChipRow}>
+                {LEAVE_TYPES.map((type) => {
+                  const active = editLeaveType === type;
+                  return (
+                    <Pressable
+                      key={type}
+                      onPress={() => setEditLeaveType(type)}
+                      style={[
+                        styles.editChip,
+                        {
+                          backgroundColor: active ? colors.primary : 'transparent',
+                          borderColor: active ? colors.primary : colors.border,
+                        },
+                      ]}>
+                      <ThemedText style={{ color: active ? '#fff' : colors.text, fontSize: 13, fontWeight: active ? '600' : '400' }}>
+                        {leaveTypeEmoji(type)} {type}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {/* Date fields */}
+              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>Başlangıç Tarihi</ThemedText>
+              <TextInput
+                style={[styles.editInput, { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
+                placeholder="GG.AA.YYYY"
+                placeholderTextColor={colors.textFaint}
+                value={editStartDate}
+                onChangeText={setEditStartDate}
+              />
+
+              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>Bitiş Tarihi</ThemedText>
+              <TextInput
+                style={[styles.editInput, { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
+                placeholder="GG.AA.YYYY"
+                placeholderTextColor={colors.textFaint}
+                value={editEndDate}
+                onChangeText={setEditEndDate}
+              />
+
+              {/* Description */}
+              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>Açıklama</ThemedText>
+              <TextInput
+                style={[styles.modalInput, { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
+                placeholder="İzin açıklaması..."
+                placeholderTextColor={colors.textFaint}
+                multiline
+                value={editDescription}
+                onChangeText={setEditDescription}
+              />
+            </ScrollView>
+
+            {editLeaveType === 'Acil' && (
+              <View style={[styles.editWarning, { backgroundColor: `${Palette.danger}14` }]}>
+                <ThemedText style={{ color: Palette.danger, fontSize: 12, fontWeight: '700' }}>
+                  ⚠️ Acil izin seçildi — kaydet butonuna basıldığında otomatik onaylanacaktır.
+                </ThemedText>
+              </View>
+            )}
+
+            <View style={styles.modalActions}>
+              <Pressable
+                onPress={() => { setEditModalVisible(false); setEditTarget(null); }}
+                style={[styles.modalCancelBtn, { borderColor: colors.border }]}>
+                <ThemedText style={[styles.modalCancelText, { color: colors.textMuted }]}>
+                  Vazgeç
+                </ThemedText>
+              </Pressable>
+              <View style={{ flex: 1 }}>
+                <Button label="Kaydet" onPress={confirmEdit} />
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -538,8 +720,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  approveBtn: {},
-  rejectBtn: {},
   actionBtnText: {
     color: '#fff',
     fontSize: 15,
@@ -592,6 +772,61 @@ const styles = StyleSheet.create({
   adminBadgeText: {
     fontSize: 12,
     fontWeight: '700',
+  },
+
+  // Card header icon buttons
+  cardHeaderActions: {
+    flexDirection: 'row',
+    gap: Space.sm,
+  },
+  iconBtn: {
+    width: 36,
+    height: 36,
+    borderRadius: Radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  // Updated badge
+  updatedBadge: {
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.xs,
+    borderRadius: Radius.sm,
+    alignSelf: 'flex-start',
+  },
+  updatedBadgeText: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
+  // Edit modal extras
+  editLabel: {
+    fontSize: 13,
+    marginBottom: Space.xs,
+    marginTop: Space.md,
+  },
+  editChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  editChip: {
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
+  editInput: {
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.lg,
+    paddingVertical: 12,
+    fontSize: 15,
+  },
+  editWarning: {
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+    borderRadius: Radius.sm,
   },
 
   // Rejection reason

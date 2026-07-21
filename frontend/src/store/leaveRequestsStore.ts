@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 
 // ─── Types ────────────────────────────────────────────────────────
-export type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'AUTO_APPROVED';
+export type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'AUTO_APPROVED' | 'CANCELED';
 export type LeaveType = 'Yıllık' | 'Sağlık' | 'Mazeret' | 'Acil';
 
 export interface LeaveRequest {
@@ -19,6 +19,17 @@ export interface LeaveRequest {
   rejectionReason?: string;
   /** Admin tarafından mı oluşturuldu? */
   createdByAdmin?: boolean;
+  /** Güncelleme yapıldıysa zaman damgası */
+  updatedAt?: string;
+}
+
+/** updateRequest için güncellenebilir alanlar (sadece PENDING izinler) */
+export interface LeaveRequestUpdate {
+  leaveType?: LeaveType;
+  startDate?: string;
+  endDate?: string;
+  netDays?: number;
+  description?: string;
 }
 
 // ─── Initial Mock Data (SRS Senaryoları) ──────────────────────────
@@ -93,6 +104,16 @@ interface LeaveRequestsState {
 
   /** Belirtilen izni reddet */
   rejectRequest: (id: string, reason: string) => void;
+
+  /** Belirtilen izni iptal et (soft-delete — statü CANCELED'a çekilir) */
+  cancelRequest: (id: string) => void;
+
+  /**
+   * Bekleyen (PENDING) bir iznin düzenlenebilir alanlarını güncelle.
+   * Kural: Sadece status === 'PENDING' olan izinler güncellenebilir.
+   * Acil türüne geçirilirse otomatik onaylanır.
+   */
+  updateRequest: (id: string, updates: LeaveRequestUpdate) => void;
 }
 
 let _idCounter = 100;
@@ -139,6 +160,41 @@ export const useLeaveRequestsStore = create<LeaveRequestsState>((set) => ({
           ? { ...r, status: 'REJECTED' as LeaveStatus, processedAt: now, rejectionReason: reason }
           : r,
       ),
+    }));
+  },
+
+  cancelRequest: (id) => {
+    const now = new Date().toLocaleString('tr-TR');
+    set((state) => ({
+      requests: state.requests.map((r) =>
+        r.id === id
+          ? { ...r, status: 'CANCELED' as LeaveStatus, processedAt: now }
+          : r,
+      ),
+    }));
+  },
+
+  updateRequest: (id, updates) => {
+    const now = new Date().toLocaleString('tr-TR');
+    set((state) => ({
+      requests: state.requests.map((r) => {
+        // Güvenlik: Sadece PENDING izinler güncellenebilir
+        if (r.id !== id || r.status !== 'PENDING') return r;
+
+        const updated: LeaveRequest = {
+          ...r,
+          ...updates,
+          updatedAt: now,
+        };
+
+        // Eğer tür 'Acil'e değiştirildiyse → otomatik onayla
+        if (updates.leaveType === 'Acil') {
+          updated.status = 'AUTO_APPROVED';
+          updated.processedAt = now;
+        }
+
+        return updated;
+      }),
     }));
   },
 }));
