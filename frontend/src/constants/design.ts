@@ -30,6 +30,7 @@ export const Palette = {
   success: '#22C55E',
   danger: '#F04438',
   warning: '#F79009',
+  canceled: '#6B7280',
 };
 
 export const Radius = {

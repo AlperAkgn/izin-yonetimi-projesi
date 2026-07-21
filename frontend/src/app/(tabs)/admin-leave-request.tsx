@@ -8,10 +8,12 @@ import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
 import { Radius, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
+import { useLeaveRequestsStore } from '@/store/leaveRequestsStore';
 import { showAlert } from '@/utils/alert';
 
-const LEAVE_TYPES = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'] as const;
-type LeaveType = (typeof LEAVE_TYPES)[number];
+import type { LeaveType } from '@/store/leaveRequestsStore';
+
+const LEAVE_TYPES: LeaveType[] = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'];
 
 const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -39,6 +41,7 @@ function countNetWeekdays(start: Date, end: Date) {
 
 export default function AdminLeaveRequestScreen() {
   const { colors } = useDesign();
+  const addRequest = useLeaveRequestsStore((s) => s.addRequest);
 
   // Çalışan bilgileri
   const [firstName, setFirstName] = useState('');
@@ -112,7 +115,30 @@ export default function AdminLeaveRequestScreen() {
 
     setError('');
 
-    console.log('Admin izin talebi:', {
+    // Tarihleri DD.MM.YYYY formatına çevir
+    const formatDate = (d: Date): string => {
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      return `${dd}.${mm}.${yyyy}`;
+    };
+
+    // Store'a ekle — iş kuralları store içinde uygulanır:
+    //   - Acil → AUTO_APPROVED
+    //   - Admin oluşturma → APPROVED
+    addRequest({
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      branch: branch.trim(),
+      leaveType: selectedType,
+      startDate: formatDate(startDate),
+      endDate: formatDate(endDate),
+      netDays,
+      description: `Admin tarafından oluşturuldu. İzin adresi: ${leaveAddress.trim()}`,
+      createdByAdmin: true,
+    });
+
+    console.log('Admin izin talebi store\'a eklendi:', {
       employee: {
         firstName: firstName.trim(),
         lastName: lastName.trim(),
@@ -122,8 +148,8 @@ export default function AdminLeaveRequestScreen() {
       },
       leave: {
         type: selectedType,
-        startDate,
-        endDate,
+        startDate: formatDate(startDate),
+        endDate: formatDate(endDate),
         netDays,
         leaveAddress: leaveAddress.trim(),
       },
@@ -131,7 +157,7 @@ export default function AdminLeaveRequestScreen() {
 
     showAlert(
       'Talep oluşturuldu',
-      `${firstName.trim()} ${lastName.trim()} adına izin talebi başarıyla oluşturuldu.`,
+      `${firstName.trim()} ${lastName.trim()} adına izin talebi başarıyla oluşturuldu.\n\nİzin Onay ekranında "İşlem Görenler" sekmesinde görüntüleyebilirsiniz.`,
       resetForm,
     );
   };
