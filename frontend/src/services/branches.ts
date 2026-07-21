@@ -24,29 +24,9 @@ export type Branch = {
   city: string;
   address: string;
   phone: string;
-  employeeCount: number;
-  hrList: BranchHR[];
 };
 
 export const MOCK_BRANCHES: Branch[] = [
-  {
-    id: 'b1',
-    name: 'İstanbul Merkez',
-    city: 'İstanbul',
-    address: 'Levent Mah. İş Kuleleri No:1',
-    phone: '0212 000 00 00',
-    employeeCount: 24,
-    hrList: [
-      { id: 'hr1', firstName: 'Ayşe', lastName: 'Yılmaz', email: 'ayse@permitflow.com', phone: '0532 000 00 01' },
-    ],
-  },
-  {
-    id: 'b2',
-    name: 'Ankara Şube',
-    city: 'Ankara',
-    address: 'Çankaya Cad. No:42',
-    phone: '0312 000 00 00',
-    employeeCount: 11,
-    hrList: [],
-  },
+  { id: 'b1', name: 'İstanbul Merkez', city: 'İstanbul', address: 'Levent Mah. İş Kuleleri No:1', phone: '0212 000 00 00' },
+  { id: 'b2', name: 'Ankara Şube', city: 'Ankara', address: 'Çankaya Cad. No:42', phone: '0312 000 00 00' },
 ];

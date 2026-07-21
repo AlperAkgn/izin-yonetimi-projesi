@@ -1,6 +1,3 @@
-import { create } from 'zustand';
-import { MOCK_BRANCHES, Branch, BranchHR } from '@/services/branches';
-
 /**
  * SOFT DELETE — BACKEND NOTU
  * deleteBranch fiziksel silmez; deletedAt damgası vurur (şartname 4.1).
@@ -8,16 +5,17 @@ import { MOCK_BRANCHES, Branch, BranchHR } from '@/services/branches';
  * Kalıcı temizlik süresi mock'ta 24 saat; gerçek süre/politika backend'de
  * belirlenecek (cron ile purge). Frontend sadece kalan süreyi gösterir.
  */
+import { create } from 'zustand';
+import { MOCK_BRANCHES, Branch } from '@/services/branches';
 
-export const PURGE_AFTER_MS = 24 * 60 * 60 * 1000; // 24 saat
+export const PURGE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 type BranchesState = {
   branches: Branch[];
-  deletedAt: Record<string, number>; // branchId → silinme zamanı (epoch ms)
-  addBranch: (data: Omit<Branch, 'id' | 'employeeCount' | 'hrList'>) => void;
+  deletedAt: Record<string, number>;
+  addBranch: (data: Omit<Branch, 'id'>) => void;
   deleteBranch: (id: string) => void;
   restoreBranch: (id: string) => void;
-  addHRToBranch: (branchId: string, hr: Omit<BranchHR, 'id'>) => void;
 };
 
 export const useBranchesStore = create<BranchesState>((set) => ({
@@ -26,16 +24,11 @@ export const useBranchesStore = create<BranchesState>((set) => ({
 
   addBranch: (data) =>
     set((state) => ({
-      branches: [
-        ...state.branches,
-        { ...data, id: `b-${Date.now()}`, employeeCount: 0, hrList: [] },
-      ],
+      branches: [...state.branches, { ...data, id: `b-${Date.now()}` }],
     })),
 
   deleteBranch: (id) =>
-    set((state) => ({
-      deletedAt: { ...state.deletedAt, [id]: Date.now() },
-    })),
+    set((state) => ({ deletedAt: { ...state.deletedAt, [id]: Date.now() } })),
 
   restoreBranch: (id) =>
     set((state) => {
@@ -43,13 +36,4 @@ export const useBranchesStore = create<BranchesState>((set) => ({
       delete next[id];
       return { deletedAt: next };
     }),
-
-  addHRToBranch: (branchId, hr) =>
-    set((state) => ({
-      branches: state.branches.map((b) =>
-        b.id === branchId
-          ? { ...b, hrList: [...b.hrList, { ...hr, id: `hr-${Date.now()}` }] }
-          : b
-      ),
-    })),
 }));

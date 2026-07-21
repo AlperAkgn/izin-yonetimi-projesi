@@ -1,9 +1,9 @@
-import { Radius, Shadow, Space } from '@/constants/design';
-import { useDesign } from '@/hooks/use-design';
 import { ReactNode } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { View, StyleSheet, ViewStyle } from 'react-native';
+import { useDesign } from '@/hooks/use-design';
+import { Radius, Space, Shadow } from '@/constants/design';
 
-export function Card({ children }: { children: ReactNode }) {
+export function Card({ children, style }: { children: ReactNode; style?: ViewStyle }) {
   const { colors } = useDesign();
   return (
     <View
@@ -11,6 +11,7 @@ export function Card({ children }: { children: ReactNode }) {
         styles.card,
         { backgroundColor: colors.surface, borderColor: colors.border },
         Shadow.card,
+        style,
       ]}>
       {children}
     </View>
