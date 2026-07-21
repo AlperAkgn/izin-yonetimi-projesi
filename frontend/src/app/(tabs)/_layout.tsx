@@ -125,6 +125,16 @@ export default function DrawerLayout() {
           drawerItemStyle: user?.role === 'ADMIN' ? undefined : { display: 'none' },
         }}
       />
+      <Drawer.Screen
+        name="leave-approval"
+        options={{
+          title: 'İzin Onay',
+          drawerIcon: ({ color, size }) => (
+            <Feather name="check-circle" size={size} color={color} />
+          ),
+          drawerItemStyle: canSeeReports ? undefined : { display: 'none' },
+        }}
+      />
     </Drawer>
   );
 }
