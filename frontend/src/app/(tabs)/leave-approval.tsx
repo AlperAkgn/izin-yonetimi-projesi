@@ -437,8 +437,9 @@ export default function LeaveApprovalScreen() {
         data={currentList}
         keyExtractor={(item) => item.id}
         renderItem={activeTab === 'pending' ? renderPendingCard : renderProcessedCard}
+        style={styles.flatList}
         contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={true}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
             <ThemedText style={[styles.emptyText, { color: colors.textFaint }]}>
@@ -647,9 +648,13 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // List
+  // List — FlatList kalan alanı doldurur, tab'lar sticky kalır
+  flatList: {
+    flex: 1,
+  },
   listContent: {
     paddingBottom: Space.xxl,
+    paddingTop: Space.xs,
     gap: Space.md,
   },
 
