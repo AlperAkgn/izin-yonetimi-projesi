@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Acil izin otomatik onaylandı</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#25313c;">
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent;">
+    {{EmployeeName}} adlı çalışanın acil izin talebi otomatik olarak onaylandı.
+  </div>
+
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;background-color:#f4f6f8;">
+    <tr>
+      <td align="center" style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;max-width:620px;background-color:#ffffff;border:1px solid #e5e9ee;border-radius:18px;overflow:hidden;box-shadow:0 10px 30px rgba(31,41,55,0.08);">
+          <tr>
+            <td style="padding:30px 36px;background-color:#b42318;color:#ffffff;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                <tr>
+                  <td valign="middle">
+                    <div style="font-size:12px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:#fee4e2;">İzin Yönetim Sistemi</div>
+                    <div style="margin-top:8px;font-size:26px;line-height:34px;font-weight:700;">Acil izin onaylandı</div>
+                  </td>
+                  <td width="56" align="right" valign="middle">
+                    <div style="width:48px;height:48px;line-height:48px;border-radius:50%;background-color:#d92d20;text-align:center;font-size:24px;">!</div>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:34px 36px 20px;">
+              <p style="margin:0 0 14px;font-size:16px;line-height:25px;">Merhaba <strong>{{RecipientName}}</strong>,</p>
+              <p style="margin:0;font-size:16px;line-height:25px;color:#475467;">
+                <strong style="color:#25313c;">{{EmployeeName}}</strong> adlı çalışanın acil izin talebi sistem tarafından otomatik olarak onaylandı.
+              </p>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:4px 36px 28px;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="width:100%;border-collapse:separate;border-spacing:0;background-color:#fff7f6;border:1px solid #fecdca;border-radius:12px;overflow:hidden;">
+                <tr>
+                  <td style="padding:18px 20px;border-bottom:1px solid #fecdca;font-size:13px;font-weight:700;letter-spacing:0.5px;text-transform:uppercase;color:#b42318;">
+                    İzin bilgileri
+                  </td>
+                </tr>
+                <tr>
+                  <td style="padding:8px 20px 18px;">
+                    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+                      <tr>
+                        <td width="125" valign="top" style="padding:11px 12px 11px 0;border-bottom:1px solid #fee4e2;font-size:14px;color:#667085;">Çalışan</td>
+                        <td valign="top" style="padding:11px 0;border-bottom:1px solid #fee4e2;font-size:14px;font-weight:700;color:#344054;">{{EmployeeName}}</td>
+                      </tr>
+                      <tr>
+                        <td width="125" valign="top" style="padding:11px 12px 11px 0;border-bottom:1px solid #fee4e2;font-size:14px;color:#667085;">İş yeri</td>
+                        <td valign="top" style="padding:11px 0;border-bottom:1px solid #fee4e2;font-size:14px;font-weight:700;color:#344054;">{{WorkplaceName}}</td>
+                      </tr>
+                      <tr>
+                        <td width="125" valign="top" style="padding:11px 12px 11px 0;border-bottom:1px solid #fee4e2;font-size:14px;color:#667085;">İzin dönemi</td>
+                        <td valign="top" style="padding:11px 0;border-bottom:1px solid #fee4e2;font-size:14px;font-weight:700;color:#344054;">{{StartDate}} – {{EndDate}}</td>
+                      </tr>
+                      <tr>
+                        <td width="125" valign="top" style="padding:11px 12px 0 0;font-size:14px;color:#667085;">Açıklama</td>
+                        <td valign="top" style="padding:11px 0 0;font-size:14px;line-height:21px;color:#344054;word-break:break-word;">{{Description}}</td>
+                      </tr>
+                    </table>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:0 36px 34px;">
+              <div style="padding:15px 18px;background-color:#f8fafc;border-left:4px solid #667085;border-radius:6px;font-size:13px;line-height:20px;color:#475467;">
+                Bu bildirim bilgilendirme amacıyla gönderilmiştir. İzin için ayrıca onay işlemi yapmanız gerekmez.
+              </div>
+            </td>
+          </tr>
+
+          <tr>
+            <td style="padding:20px 36px;background-color:#f8fafc;border-top:1px solid #e4e7ec;font-size:12px;line-height:18px;color:#667085;">
+              Bu e-posta otomatik olarak gönderilmiştir. Lütfen bu iletiyi yanıtlamayın.
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>

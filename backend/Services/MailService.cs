@@ -45,6 +45,41 @@ namespace LeaveManagementAPI.Services
             await smtpClient.SendMailAsync(message);
         }
 
+        public async Task SendEmergencyLeaveApprovedAsync(
+            string recipientEmail,
+            string recipientName,
+            string employeeName,
+            string workplaceName,
+            DateTime startDate,
+            DateTime endDate,
+            string? description,
+            CancellationToken cancellationToken = default)
+        {
+            ValidateSettings();
+
+            using var smtpClient = new SmtpClient(_settings.SmtpServer, _settings.Port)
+            {
+                EnableSsl = true,
+                UseDefaultCredentials = false,
+                Credentials = new NetworkCredential(_settings.From, GetAppPassword())
+            };
+
+            using var message = new MailMessage
+            {
+                From = new MailAddress(_settings.From, _settings.SenderName),
+                Subject = "İzin Yönetim Sistemi | Acil izin otomatik onaylandı",
+                Body = await CreateEmergencyLeaveApprovedEmailBodyAsync(
+                    recipientName, employeeName, workplaceName, startDate, endDate, description, cancellationToken),
+                SubjectEncoding = System.Text.Encoding.UTF8,
+                BodyEncoding = System.Text.Encoding.UTF8,
+                IsBodyHtml = true
+            };
+
+            message.To.Add(recipientEmail);
+            cancellationToken.ThrowIfCancellationRequested();
+            await smtpClient.SendMailAsync(message);
+        }
+
         private void ValidateSettings()
         {
             if (string.IsNullOrWhiteSpace(_settings.SmtpServer)
@@ -85,6 +120,35 @@ namespace LeaveManagementAPI.Services
             return template
                 .Replace("{{RecipientName}}", safeRecipientName, StringComparison.Ordinal)
                 .Replace("{{TemporaryPassword}}", safeTemporaryPassword, StringComparison.Ordinal);
+        }
+
+        private async Task<string> CreateEmergencyLeaveApprovedEmailBodyAsync(
+            string recipientName,
+            string employeeName,
+            string workplaceName,
+            DateTime startDate,
+            DateTime endDate,
+            string? description,
+            CancellationToken cancellationToken)
+        {
+            var templatePath = Path.Combine(
+                _environment.ContentRootPath,
+                "EmailTemplates",
+                "EmergencyLeaveApproved.html");
+
+            if (!File.Exists(templatePath))
+            {
+                throw new FileNotFoundException("Acil izin e-posta sablonu bulunamadi.", templatePath);
+            }
+
+            var template = await File.ReadAllTextAsync(templatePath, cancellationToken);
+            return template
+                .Replace("{{RecipientName}}", WebUtility.HtmlEncode(recipientName), StringComparison.Ordinal)
+                .Replace("{{EmployeeName}}", WebUtility.HtmlEncode(employeeName), StringComparison.Ordinal)
+                .Replace("{{WorkplaceName}}", WebUtility.HtmlEncode(workplaceName), StringComparison.Ordinal)
+                .Replace("{{StartDate}}", startDate.ToString("dd.MM.yyyy"), StringComparison.Ordinal)
+                .Replace("{{EndDate}}", endDate.ToString("dd.MM.yyyy"), StringComparison.Ordinal)
+                .Replace("{{Description}}", WebUtility.HtmlEncode(description ?? "Belirtilmedi"), StringComparison.Ordinal);
         }
     }
 }
