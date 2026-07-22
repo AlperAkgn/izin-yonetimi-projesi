@@ -17,11 +17,19 @@ namespace LeaveManagementAPI.Controller
     {
         private readonly AppDbContext _context;
         private readonly ILeaveDayCalculator _leaveDayCalculator;
+        private readonly IMailService _mailService;
+        private readonly ILogger<LeaveRequestsController> _logger;
 
-        public LeaveRequestsController(AppDbContext context, ILeaveDayCalculator leaveDayCalculator)
+        public LeaveRequestsController(
+            AppDbContext context,
+            ILeaveDayCalculator leaveDayCalculator,
+            IMailService mailService,
+            ILogger<LeaveRequestsController> logger)
         {
             _context = context;
             _leaveDayCalculator = leaveDayCalculator;
+            _mailService = mailService;
+            _logger = logger;
         }
 
         [HttpGet("my")]
@@ -119,14 +127,18 @@ namespace LeaveManagementAPI.Controller
                 return BadRequest(new { message = "Secilen tarih araliginda izin hakkindan dusecek is gunu yok." });
             }
 
-            var rejectionReason = await GetAnnualLeaveLimitExceededReasonAsync(
-                currentUser.Id,
-                request.WorkplaceId,
-                userWorkplace.AnnualLeaveCount,
-                startDate,
-                endDate,
-                null,
-                cancellationToken);
+            var isEmergencyLeave = request.LeaveType == LeaveType.EMERGENCY;
+            var chargeableDays = chargeableDaysByYear.Values.Sum();
+            var rejectionReason = isEmergencyLeave
+                ? null
+                : await GetAnnualLeaveLimitExceededReasonAsync(
+                    currentUser.Id,
+                    request.WorkplaceId,
+                    userWorkplace.AnnualLeaveCount,
+                    startDate,
+                    endDate,
+                    null,
+                    cancellationToken);
 
             var leaveRequest = new LeaveRequest
             {
@@ -137,8 +149,10 @@ namespace LeaveManagementAPI.Controller
                 EndDate = endDate,
                 Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
                 EmergencyContact = string.IsNullOrWhiteSpace(request.EmergencyContact) ? null : request.EmergencyContact.Trim(),
-                Status = rejectionReason is null ? LeaveStatus.PENDING : LeaveStatus.REJECTED,
-                ChargedLeaveDays = 0,
+                Status = rejectionReason is not null
+                    ? LeaveStatus.REJECTED
+                    : isEmergencyLeave ? LeaveStatus.APPROVED : LeaveStatus.PENDING,
+                ChargedLeaveDays = isEmergencyLeave ? chargeableDays : 0,
                 RejectionReason = rejectionReason
             };
 
@@ -147,10 +161,17 @@ namespace LeaveManagementAPI.Controller
             {
                 LeaveRequest = leaveRequest,
                 ActionByUserId = currentUser.Id,
-                ActionType = rejectionReason is null ? AuditActionType.CREATED : AuditActionType.REJECTED,
+                ActionType = rejectionReason is not null
+                    ? AuditActionType.REJECTED
+                    : isEmergencyLeave ? AuditActionType.APPROVED : AuditActionType.CREATED,
                 ActionAt = DateTime.UtcNow
             });
             await _context.SaveChangesAsync(cancellationToken);
+
+            if (isEmergencyLeave)
+            {
+                await NotifyEmergencyLeaveApprovedAsync(leaveRequest, currentUser, cancellationToken);
+            }
 
             return Created($"/api/leave-requests/{leaveRequest.Id}", ToResponse(leaveRequest));
         }
@@ -425,6 +446,47 @@ namespace LeaveManagementAPI.Controller
         private static DateTime NormalizeDate(DateTime date)
         {
             return DateTime.SpecifyKind(date.Date, DateTimeKind.Utc);
+        }
+
+        private async Task NotifyEmergencyLeaveApprovedAsync(
+            LeaveRequest leaveRequest,
+            User employee,
+            CancellationToken cancellationToken)
+        {
+            var workplace = await _context.Workplaces
+                .SingleAsync(item => item.Id == leaveRequest.WorkplaceId, cancellationToken);
+            var recipients = await _context.Users
+                .Where(user => user.IsActive
+                    && (user.Role == UserRole.ADMIN
+                        || (user.Role == UserRole.HR && user.UserWorkplaces
+                            .Any(mapping => mapping.WorkplaceId == leaveRequest.WorkplaceId))))
+                .Select(user => new { user.Mail, Name = user.Name + " " + user.Surname })
+                .ToListAsync(cancellationToken);
+
+            foreach (var recipient in recipients
+                .Where(item => !string.IsNullOrWhiteSpace(item.Mail))
+                .DistinctBy(item => item.Mail.Trim(), StringComparer.OrdinalIgnoreCase))
+            {
+                try
+                {
+                    await _mailService.SendEmergencyLeaveApprovedAsync(
+                        recipient.Mail,
+                        recipient.Name,
+                        $"{employee.Name} {employee.Surname}",
+                        workplace.Name,
+                        leaveRequest.StartDate,
+                        leaveRequest.EndDate,
+                        leaveRequest.Description,
+                        cancellationToken);
+                }
+                catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
+                {
+                    _logger.LogError(exception,
+                        "Acil izin {LeaveRequestId} için {RecipientMail} adresine bildirim gönderilemedi.",
+                        leaveRequest.Id,
+                        recipient.Mail);
+                }
+            }
         }
 
         private async Task<string?> GetAnnualLeaveLimitExceededReasonAsync(
