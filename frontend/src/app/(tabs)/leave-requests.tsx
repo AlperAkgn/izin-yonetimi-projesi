@@ -40,6 +40,7 @@ export default function LeaveRequestsScreen() {
   const [endDate, setEndDate] = useState(new Date());
   const [description, setDescription] = useState('');
   const [emergencyContact, setEmergencyContact] = useState('');
+  const [leaveAddress, setLeaveAddress] = useState('');
   const [error, setError] = useState('');
 
   const today = new Date();
@@ -52,6 +53,7 @@ export default function LeaveRequestsScreen() {
     setEndDate(new Date());
     setDescription('');
     setEmergencyContact('');
+    setLeaveAddress('');
   };
 
   const handleSubmit = () => {
@@ -74,6 +76,10 @@ export default function LeaveRequestsScreen() {
       setError('Geçerli bir telefon numarası gir (örn: 05XX XXX XX XX)');
       return;
     }
+    if (leaveAddress.trim().length === 0) {
+      setError('İzinde bulunacağınız adres boş bırakılamaz');
+      return;
+    }
     setError('');
 
     console.log('İzin talebi:', {
@@ -83,6 +89,7 @@ export default function LeaveRequestsScreen() {
       netDays,
       description,
       emergencyContact,
+      leaveAddress: leaveAddress.trim(),
     });
 
     showAlert('Talep oluşturuldu', 'İzin talebin başarıyla oluşturuldu.', resetForm);
@@ -170,6 +177,19 @@ export default function LeaveRequestsScreen() {
           keyboardType="phone-pad"
           value={emergencyContact}
           onChangeText={setEmergencyContact}
+        />
+
+        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzinde Bulunacağınız Adres</ThemedText>
+        <TextInput
+          style={[
+            styles.textArea,
+            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+          ]}
+          placeholder="İzin süresince bulunacağınız adres"
+          placeholderTextColor={colors.textFaint}
+          multiline
+          value={leaveAddress}
+          onChangeText={setLeaveAddress}
         />
 
         {error !== '' && (

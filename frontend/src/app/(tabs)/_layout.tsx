@@ -98,11 +98,47 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
+        name="branches"
+        options={{
+          title: 'Şubeler',
+          drawerIcon: ({ color, size }) => <Feather name="map-pin" size={size} color={color} />,
+          drawerItemStyle: user?.role === 'ADMIN' ? undefined : { display: 'none' },
+        }}
+      />
+      <Drawer.Screen
+        name="users"
+        options={{
+          title: 'Kullanıcı Oluştur',
+          drawerIcon: ({ color, size }) => <Feather name="users" size={size} color={color} />,
+          drawerItemStyle: user?.role === 'ADMIN' ? undefined : { display: 'none' },
+        }}
+      />
+      <Drawer.Screen
         name="reports"
         options={{
           title: 'Raporlar',
           drawerIcon: ({ color, size }) => (
             <Feather name="bar-chart-2" size={size} color={color} />
+          ),
+          drawerItemStyle: canSeeReports ? undefined : { display: 'none' },
+        }}
+      />
+      <Drawer.Screen
+        name="admin-leave-request"
+        options={{
+          title: 'Çalışan İzin Yaz',
+          drawerIcon: ({ color, size }) => (
+            <Feather name="user-plus" size={size} color={color} />
+          ),
+          drawerItemStyle: user?.role === 'ADMIN' ? undefined : { display: 'none' },
+        }}
+      />
+      <Drawer.Screen
+        name="leave-approval"
+        options={{
+          title: 'İzin Onay',
+          drawerIcon: ({ color, size }) => (
+            <Feather name="check-circle" size={size} color={color} />
           ),
           drawerItemStyle: canSeeReports ? undefined : { display: 'none' },
         }}
