@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { ScrollView, StyleSheet, TextInput, View, Pressable } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { router } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 import { showConfirm } from '@/utils/alert';
@@ -192,15 +193,18 @@ export default function BranchesScreen() {
           </View>
 
           <View style={styles.grid}>
-            {filtered.map((item) => (
-              <View key={item.id} style={[styles.gridItem, { width: `${100 / columns}%` }]}>
+            {filtered.map((item, index) => (
+              <Animated.View
+                key={item.id}
+                entering={FadeInDown.delay(index * 50).duration(280).springify().damping(18)}
+                style={[styles.gridItem, { width: `${100 / columns}%` }]}>
                 <BranchCard
                   branch={item}
                   userCount={getBranchUsers(users, usersDeletedAt, item.id).length}
                   onEdit={() => setMode({ edit: item })}
                   onManage={() => router.push(`/branch/${item.id}`)}
                 />
-              </View>
+              </Animated.View>
             ))}
           </View>
         </View>

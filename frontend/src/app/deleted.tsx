@@ -2,6 +2,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { Stack } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
+import { BackButton } from '@/components/ui/back-button';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useDesign } from '@/hooks/use-design';
@@ -40,6 +41,7 @@ export default function DeletedScreen() {
           title: 'Silinenler',
           headerStyle: { backgroundColor: colors.surface },
           headerTintColor: colors.text,
+          headerLeft: () => <BackButton />,
         }}
       />
 
