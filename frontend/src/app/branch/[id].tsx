@@ -4,6 +4,7 @@ import { useLocalSearchParams, Stack } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 
 import { ThemedText } from '@/components/themed-text';
+import { BackButton } from '@/components/ui/back-button';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { LabeledInput } from '@/components/ui/labeled-input';
@@ -184,6 +185,7 @@ export default function BranchDetailScreen() {
         title: branch?.name ?? 'Şube',
         headerStyle: { backgroundColor: colors.surface },
         headerTintColor: colors.text,
+        headerLeft: () => <BackButton />,
       }}
     />
   );

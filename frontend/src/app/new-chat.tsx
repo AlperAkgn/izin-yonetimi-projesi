@@ -3,6 +3,7 @@ import { router, Stack } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
+import { BackButton } from '@/components/ui/back-button';
 import { ThemedText } from '@/components/themed-text';
 import { Radius, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
@@ -43,6 +44,7 @@ export default function NewChatScreen() {
           title: 'Yeni Sohbet',
           headerStyle: { backgroundColor: colors.surface },
           headerTintColor: colors.text,
+          headerLeft: () => <BackButton />,
         }}
       />
 
