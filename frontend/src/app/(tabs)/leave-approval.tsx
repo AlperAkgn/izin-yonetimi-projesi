@@ -14,6 +14,7 @@ import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Palette, Radius, Shadow, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
+import { useAuthStore } from '@/store/authStore';
 import {
   filterPendingRequests,
   filterProcessedRequests,
@@ -79,6 +80,11 @@ export default function LeaveApprovalScreen() {
 
   const [activeTab, setActiveTab] = useState<Tab>('pending');
 
+  // 🔒 Auth store'dan login olan kullanıcı bilgisi
+  const authUser = useAuthStore((s) => s.user);
+  const userRole = authUser?.role ?? 'ADMIN';
+  const userBranch = authUser?.branchName ?? null;
+
   // Store'dan oku
   const allRequests = useLeaveRequestsStore((s) => s.requests);
   const approveRequest = useLeaveRequestsStore((s) => s.approveRequest);
@@ -86,9 +92,9 @@ export default function LeaveApprovalScreen() {
   const cancelRequest = useLeaveRequestsStore((s) => s.cancelRequest);
   const updateRequest = useLeaveRequestsStore((s) => s.updateRequest);
 
-  // Türetilmiş listeler — tek kaynak (store) üzerinden filtrelenir
-  const pendingList = filterPendingRequests(allRequests);
-  const processedList = filterProcessedRequests(allRequests);
+  // Türetilmiş listeler — tek kaynak (store) üzerinden ROL BAZLI filtrelenir
+  const pendingList = filterPendingRequests(allRequests, userRole, userBranch);
+  const processedList = filterProcessedRequests(allRequests, userRole, userBranch);
 
   // Reject modal state
   const [rejectModalVisible, setRejectModalVisible] = useState(false);

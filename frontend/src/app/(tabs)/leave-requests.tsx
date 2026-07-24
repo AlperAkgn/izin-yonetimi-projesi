@@ -8,11 +8,14 @@ import { Card } from '@/components/ui/card';
 import { Screen } from '@/components/ui/screen';
 import { Radius, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
+import { useAuthStore } from '@/store/authStore';
+import { useLeaveRequestsStore } from '@/store/leaveRequestsStore';
 import { showAlert } from '@/utils/alert';
 import { normalizePhone } from '@/utils/phone';
 
-const LEAVE_TYPES = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'] as const;
-type LeaveType = (typeof LEAVE_TYPES)[number];
+import type { LeaveType } from '@/store/leaveRequestsStore';
+
+const LEAVE_TYPES: LeaveType[] = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'];
 
 const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
 
@@ -51,6 +54,8 @@ function CharCounter({ current, max, color }: { current: number; max: number; co
 
 export default function LeaveRequestsScreen() {
   const { colors } = useDesign();
+  const addRequest = useLeaveRequestsStore((s) => s.addRequest);
+  const authUser = useAuthStore((s) => s.user);
 
   const [selectedType, setSelectedType] = useState<LeaveType>('Yıllık');
   const [startDate, setStartDate] = useState(new Date());
@@ -99,17 +104,38 @@ export default function LeaveRequestsScreen() {
     }
     setError('');
 
-    console.log('İzin talebi:', {
+    // Tarihleri DD.MM.YYYY formatına çevir
+    const formatDate = (d: Date): string => {
+      const dd = String(d.getDate()).padStart(2, '0');
+      const mm = String(d.getMonth() + 1).padStart(2, '0');
+      const yyyy = d.getFullYear();
+      return `${dd}.${mm}.${yyyy}`;
+    };
+
+    // Store'a ekle — İzin Onay ekranında anlık listelenir
+    addRequest({
+      firstName: authUser?.name?.split(' ')[0] ?? 'Bilinmeyen',
+      lastName: authUser?.name?.split(' ').slice(1).join(' ') ?? '',
+      branch: authUser?.branchName ?? 'Bilinmeyen Şube',
+      leaveType: selectedType,
+      startDate: formatDate(startDate),
+      endDate: formatDate(endDate),
+      netDays,
+      description: description.trim(),
+      createdByAdmin: false,
+    });
+
+    console.log('İzin talebi store\'a eklendi:', {
       type: selectedType,
-      startDate,
-      endDate,
+      startDate: formatDate(startDate),
+      endDate: formatDate(endDate),
       netDays,
       description,
       emergencyContact,
       leaveAddress: leaveAddress.trim(),
     });
 
-    showAlert('Talep oluşturuldu', 'İzin talebin başarıyla oluşturuldu.', resetForm);
+    showAlert('Talep oluşturuldu', 'İzin talebin başarıyla oluşturuldu.\n\nİzin Onay ekranında "Bekleyen Talepler" sekmesinde görüntüleyebilirsiniz.', resetForm);
   };
 
   return (
