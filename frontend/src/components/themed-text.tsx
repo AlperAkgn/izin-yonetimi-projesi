@@ -4,7 +4,16 @@ import { Fonts, ThemeColor } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
 
 export type ThemedTextProps = TextProps & {
-  type?: 'default' | 'title' | 'small' | 'smallBold' | 'subtitle' | 'link' | 'linkPrimary' | 'code';
+  type?:
+    | 'default'
+    | 'title'
+    | 'subtitle'
+    | 'heading'
+    | 'small'
+    | 'smallBold'
+    | 'link'
+    | 'linkPrimary'
+    | 'code';
   themeColor?: ThemeColor;
 };
 
@@ -17,9 +26,10 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
         { color: theme[themeColor ?? 'text'] },
         type === 'default' && styles.default,
         type === 'title' && styles.title,
+        type === 'subtitle' && styles.subtitle,
+        type === 'heading' && styles.heading,
         type === 'small' && styles.small,
         type === 'smallBold' && styles.smallBold,
-        type === 'subtitle' && styles.subtitle,
         type === 'link' && styles.link,
         type === 'linkPrimary' && styles.linkPrimary,
         type === 'code' && styles.code,
@@ -30,7 +40,17 @@ export function ThemedText({ style, type = 'default', themeColor, ...rest }: The
   );
 }
 
+/**
+ * Ölçek: 12 · 14 · 16 · 20 · 22 · 28.
+ * Önceden title 48, subtitle 32'ydi — 16'dan sonraki ilk adım 32 olduğu için
+ * ara başlık diye bir şey yoktu ve 480px'lik kolonlarda başlıklar taşıyordu.
+ */
 const styles = StyleSheet.create({
+  code: {
+    fontFamily: Fonts.mono,
+    fontWeight: Platform.select({ android: 700 }) ?? 500,
+    fontSize: 12,
+  },
   small: {
     fontSize: 14,
     lineHeight: 20,
@@ -46,15 +66,23 @@ const styles = StyleSheet.create({
     lineHeight: 24,
     fontWeight: 500,
   },
-  title: {
-    fontSize: 48,
+  /** Kart/bölüm başlığı */
+  heading: {
+    fontSize: 20,
+    lineHeight: 26,
     fontWeight: 600,
-    lineHeight: 52,
   },
+  /** Bölüm başlığı */
   subtitle: {
-    fontSize: 32,
-    lineHeight: 44,
+    fontSize: 22,
+    lineHeight: 28,
     fontWeight: 600,
+  },
+  /** Sayfa başlığı */
+  title: {
+    fontSize: 28,
+    lineHeight: 34,
+    fontWeight: 700,
   },
   link: {
     lineHeight: 30,
@@ -64,10 +92,5 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     fontSize: 14,
     color: '#3c87f7',
-  },
-  code: {
-    fontFamily: Fonts.mono,
-    fontWeight: Platform.select({ android: 700 }) ?? 500,
-    fontSize: 12,
   },
 });

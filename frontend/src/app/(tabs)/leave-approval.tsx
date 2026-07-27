@@ -1,7 +1,10 @@
-import { useState } from 'react';
+import Feather from '@expo/vector-icons/Feather';
+import { useMemo, useState } from 'react';
 import {
   FlatList,
+  KeyboardAvoidingView,
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -9,77 +12,559 @@ import {
   View,
 } from 'react-native';
 import Animated, {
-  Easing,
   FadeInDown,
-  interpolateColor,
+  FadeOutUp,
+  LinearTransition,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  withSpring,
 } from 'react-native-reanimated';
 
+import { DateField } from '@/components/date-field';
 import { ThemedText } from '@/components/themed-text';
+import { Avatar } from '@/components/ui/avatar';
+import { BalanceBar } from '@/components/ui/balance-bar';
 import { Button } from '@/components/ui/button';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Notice } from '@/components/ui/notice';
 import { Screen } from '@/components/ui/screen';
+import { SegmentedTabs } from '@/components/ui/segmented-tabs';
 import { Palette, Radius, Shadow, Space } from '@/constants/design';
+import { LEAVE_TYPES, leaveTypeEmoji, statusMeta } from '@/constants/leave';
 import { useDesign } from '@/hooks/use-design';
+import { DEFAULT_LEAVE_DAYS } from '@/services/branches';
 import { useAuthStore } from '@/store/authStore';
+import { useBranchesStore } from '@/store/branchesStore';
 import {
+  calculateLeaveBalance,
   filterPendingRequests,
   filterProcessedRequests,
+  findOverlappingLeaves,
   useLeaveRequestsStore,
 } from '@/store/leaveRequestsStore';
-import { showAlert, showConfirm } from '@/utils/alert';
+import { showToast } from '@/store/toastStore';
+import { countNetWeekdays, formatDate, parseDate } from '@/utils/date';
 
-import type { LeaveRequest, LeaveStatus, LeaveType } from '@/store/leaveRequestsStore';
+import type { FeatherName } from '@/components/ui/icon';
+import type { LeaveBalance, LeaveRequest, LeaveType } from '@/store/leaveRequestsStore';
 
-const LEAVE_TYPES: LeaveType[] = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'];
+/** Ret modalında tek dokunuşla doldurulabilen hazır gerekçeler */
+const REJECT_PRESETS: { label: string; reason: string }[] = [
+  {
+    label: 'Yoğun dönem',
+    reason: 'Talep edilen tarihlerde iş yoğunluğu nedeniyle izin verilememektedir.',
+  },
+  { label: 'Bakiye yetersiz', reason: 'Kalan izin bakiyesi bu talep için yeterli değil.' },
+  {
+    label: 'Tarih çakışması',
+    reason: 'Aynı tarihlerde ekipten başka bir çalışanın izni onaylanmış durumda.',
+  },
+  { label: 'Geç bildirim', reason: 'Talep, izin başlangıcına çok yakın bir tarihte iletildi.' },
+];
+
+const MAX_REJECT_REASON = 300;
+/** Açıklama bu uzunluğu aşarsa 2 satıra kırpılıp "Devamını gör" çıkar */
+const DESCRIPTION_CLAMP = 110;
+
+const PRESS_SPRING = { damping: 15, stiffness: 300 };
 
 // ─── Helpers ──────────────────────────────────────────────────────
 type Tab = 'pending' | 'history';
+type StatusFilter = 'ALL' | 'APPROVED' | 'REJECTED' | 'CANCELED';
 
-function statusLabel(status: LeaveStatus): string {
-  switch (status) {
+const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+  { value: 'ALL', label: 'Tümü' },
+  { value: 'APPROVED', label: 'Onaylı' },
+  { value: 'REJECTED', label: 'Reddedilen' },
+  { value: 'CANCELED', label: 'İptal' },
+];
+
+function matchesQuery(request: LeaveRequest, query: string): boolean {
+  if (query.length === 0) return true;
+  const haystack = `${request.firstName} ${request.lastName} ${request.branch}`.toLocaleLowerCase(
+    'tr-TR',
+  );
+  return haystack.includes(query);
+}
+
+function matchesStatusFilter(request: LeaveRequest, filter: StatusFilter): boolean {
+  switch (filter) {
     case 'APPROVED':
-      return '✅ Onaylandı';
+      return request.status === 'APPROVED' || request.status === 'AUTO_APPROVED';
     case 'REJECTED':
-      return '❌ Reddedildi';
-    case 'AUTO_APPROVED':
-      return '🚨 ACİL - Sistem Tarafından Onaylandı';
+      return request.status === 'REJECTED';
     case 'CANCELED':
-      return '🚫 İptal Edildi';
+      return request.status === 'CANCELED';
     default:
-      return '⏳ Beklemede';
+      return true;
   }
 }
 
-function statusColor(status: LeaveStatus): string {
-  switch (status) {
-    case 'APPROVED':
-      return Palette.success;
-    case 'REJECTED':
-      return Palette.danger;
-    case 'AUTO_APPROVED':
-      return Palette.danger;
-    case 'CANCELED':
-      return Palette.canceled;
-    default:
-      return Palette.warning;
-  }
+// ─── Küçük parçalar ───────────────────────────────────────────────
+
+/** Kart başlığındaki 44px'lik ikon düğmesi — basma ve (web'de) hover geri bildirimi */
+function IconButton({
+  icon,
+  label,
+  tone,
+  onPress,
+}: {
+  icon: FeatherName;
+  label: string;
+  tone: string;
+  onPress: () => void;
+}) {
+  const [hovered, setHovered] = useState(false);
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        styles.iconBtn,
+        // Aynı rengin üç yoğunluğu: boşta / hover / basılı
+        { backgroundColor: `${tone}${pressed ? '33' : hovered ? '24' : '14'}` },
+      ]}>
+      <Feather name={icon} size={17} color={tone} />
+    </Pressable>
+  );
 }
 
-function leaveTypeEmoji(type: string): string {
-  switch (type) {
-    case 'Yıllık':
-      return '🏖️';
-    case 'Sağlık':
-      return '🏥';
-    case 'Mazeret':
-      return '📋';
-    case 'Acil':
-      return '🚨';
-    default:
-      return '📄';
-  }
+/** Onayla/Reddet düğmesi — dolu (birincil) veya çerçeveli (ikincil) */
+function ActionButton({
+  icon,
+  label,
+  tone,
+  tonePressed,
+  filled,
+  onPress,
+}: {
+  icon: FeatherName;
+  label: string;
+  tone: string;
+  tonePressed: string;
+  filled: boolean;
+  onPress: () => void;
+}) {
+  const scale = useSharedValue(1);
+  const [hovered, setHovered] = useState(false);
+  const animatedStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+
+  return (
+    <Pressable
+      onPress={onPress}
+      onPressIn={() => {
+        scale.value = withSpring(0.96, PRESS_SPRING);
+      }}
+      onPressOut={() => {
+        scale.value = withSpring(1, PRESS_SPRING);
+      }}
+      onHoverIn={() => setHovered(true)}
+      onHoverOut={() => setHovered(false)}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={styles.actionPressable}>
+      {({ pressed }) => (
+        <Animated.View
+          style={[
+            styles.actionBtn,
+            animatedStyle,
+            filled
+              ? { backgroundColor: pressed ? tonePressed : tone }
+              : {
+                  borderWidth: 1,
+                  borderColor: tone,
+                  backgroundColor: `${tone}${pressed ? '24' : hovered ? '14' : '00'}`,
+                },
+          ]}>
+          <Feather name={icon} size={16} color={filled ? '#fff' : tone} />
+          <ThemedText style={[styles.actionBtnText, { color: filled ? '#fff' : tone }]}>
+            {label}
+          </ThemedText>
+        </Animated.View>
+      )}
+    </Pressable>
+  );
+}
+
+function Checkbox({
+  checked,
+  label,
+  onToggle,
+}: {
+  checked: boolean;
+  label: string;
+  onToggle: () => void;
+}) {
+  const { colors } = useDesign();
+
+  return (
+    <Pressable
+      onPress={onToggle}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+      accessibilityLabel={label}
+      hitSlop={10}
+      style={[
+        styles.checkbox,
+        {
+          backgroundColor: checked ? colors.primary : 'transparent',
+          borderColor: checked ? colors.primary : colors.border,
+        },
+      ]}>
+      {checked && <Feather name="check" size={13} color="#fff" />}
+    </Pressable>
+  );
+}
+
+/** Başlıktaki özet kutucuğu */
+function StatChip({
+  icon,
+  label,
+  value,
+  color,
+}: {
+  icon: FeatherName;
+  label: string;
+  value: number;
+  color: string;
+}) {
+  const { colors } = useDesign();
+
+  return (
+    <View style={[styles.statChip, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+      <View style={[styles.statIcon, { backgroundColor: `${color}18` }]}>
+        <Feather name={icon} size={13} color={color} />
+      </View>
+      <View style={styles.grow}>
+        <ThemedText style={[styles.statValue, { color: colors.text }]}>{value}</ThemedText>
+        <ThemedText style={[styles.statLabel, { color: colors.textMuted }]} numberOfLines={1}>
+          {label}
+        </ThemedText>
+      </View>
+    </View>
+  );
+}
+
+/** Başlangıç → Bitiş aralığı ve net gün rozeti */
+function DateRangeBox({ item }: { item: LeaveRequest }) {
+  const { colors } = useDesign();
+
+  return (
+    <View
+      style={[
+        styles.dateBox,
+        { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+      ]}>
+      <View style={styles.dateRange}>
+        <View>
+          <ThemedText style={[styles.dateLabel, { color: colors.textFaint }]}>Başlangıç</ThemedText>
+          <ThemedText style={[styles.dateValue, { color: colors.text }]}>
+            {item.startDate}
+          </ThemedText>
+        </View>
+        <Feather name="arrow-right" size={14} color={colors.textFaint} />
+        <View>
+          <ThemedText style={[styles.dateLabel, { color: colors.textFaint }]}>Bitiş</ThemedText>
+          <ThemedText style={[styles.dateValue, { color: colors.text }]}>{item.endDate}</ThemedText>
+        </View>
+      </View>
+
+      <View style={[styles.dayPill, { backgroundColor: colors.primarySoft }]}>
+        <ThemedText style={[styles.dayPillText, { color: colors.primary }]}>
+          {item.netDays} gün
+        </ThemedText>
+      </View>
+    </View>
+  );
+}
+
+/**
+ * Uzun açıklamaları 2 satıra kırpar. Satır sayısını ölçmek yerine karakter
+ * eşiği kullanıyoruz: onTextLayout react-native-web'de tetiklenmiyor, ölçüme
+ * bağlansaydı web'de "Devamını gör" hiç görünmezdi.
+ */
+function ExpandableText({ text }: { text: string }) {
+  const { colors } = useDesign();
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > DESCRIPTION_CLAMP;
+
+  return (
+    <View style={styles.descWrap}>
+      <ThemedText
+        style={[styles.cardDescription, { color: colors.textMuted }]}
+        numberOfLines={isLong && !expanded ? 2 : undefined}>
+        {text}
+      </ThemedText>
+      {isLong && (
+        <Pressable
+          onPress={() => setExpanded((v) => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Açıklamayı kısalt' : 'Açıklamanın tamamını göster'}
+          hitSlop={8}>
+          <ThemedText style={[styles.moreLink, { color: colors.primary }]}>
+            {expanded ? 'Daha az göster' : 'Devamını gör'}
+          </ThemedText>
+        </Pressable>
+      )}
+    </View>
+  );
+}
+
+function UpdatedBadge({ at }: { at: string }) {
+  const { colors } = useDesign();
+
+  return (
+    <View style={[styles.updatedBadge, { backgroundColor: colors.primarySoft }]}>
+      <Feather name="edit-3" size={11} color={colors.primary} />
+      <ThemedText style={[styles.updatedBadgeText, { color: colors.primary }]}>
+        Güncellendi — {at}
+      </ThemedText>
+    </View>
+  );
+}
+
+/** Kartın üst satırı: (seçim kutusu) + avatar + isim/şube + sağdaki içerik */
+function CardHeader({
+  item,
+  leading,
+  children,
+}: {
+  item: LeaveRequest;
+  leading?: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  const { colors } = useDesign();
+
+  return (
+    <View style={styles.cardHeader}>
+      {leading}
+      <Avatar firstName={item.firstName} lastName={item.lastName} size={38} />
+      <View style={styles.grow}>
+        <ThemedText style={[styles.cardName, { color: colors.text }]} numberOfLines={1}>
+          {item.firstName} {item.lastName}
+        </ThemedText>
+        <View style={styles.branchRow}>
+          <Feather name="map-pin" size={11} color={colors.textMuted} />
+          <ThemedText style={[styles.cardBranch, { color: colors.textMuted }]} numberOfLines={1}>
+            {item.branch}
+          </ThemedText>
+        </View>
+      </View>
+      {children}
+    </View>
+  );
+}
+
+function TypeBadge({ type }: { type: LeaveType }) {
+  const { colors } = useDesign();
+
+  return (
+    <View style={[styles.typeBadge, { backgroundColor: colors.primarySoft }]}>
+      <ThemedText style={[styles.typeBadgeText, { color: colors.primary }]}>
+        {leaveTypeEmoji(type)} {type}
+      </ThemedText>
+    </View>
+  );
+}
+
+// ─── Kartlar ──────────────────────────────────────────────────────
+
+const cardEntering = (index: number) =>
+  // Gecikmeyi sınırlıyoruz: index * 50 ile 20. kart bir saniye sonra beliriyordu
+  FadeInDown.delay(Math.min(index, 6) * 50)
+    .duration(280)
+    .springify()
+    .damping(18);
+
+function PendingCard({
+  item,
+  index,
+  balance,
+  overlaps,
+  selected,
+  onToggleSelect,
+  onApprove,
+  onReject,
+  onEdit,
+  onCancel,
+}: {
+  item: LeaveRequest;
+  index: number;
+  balance: LeaveBalance | null;
+  overlaps: LeaveRequest[];
+  selected: boolean;
+  onToggleSelect: (id: string) => void;
+  onApprove: (item: LeaveRequest) => void;
+  onReject: (item: LeaveRequest) => void;
+  onEdit: (item: LeaveRequest) => void;
+  onCancel: (item: LeaveRequest) => void;
+}) {
+  const { colors } = useDesign();
+  const exceedsBalance = balance !== null && item.netDays > balance.remaining;
+
+  return (
+    <Animated.View
+      entering={cardEntering(index)}
+      exiting={FadeOutUp.duration(200)}
+      layout={LinearTransition.springify().damping(18)}
+      style={[
+        styles.card,
+        {
+          backgroundColor: colors.surface,
+          borderColor: selected ? colors.primary : colors.border,
+        },
+        Shadow.card,
+      ]}>
+      <View style={[styles.statusStripe, { backgroundColor: Palette.warning }]} />
+
+      {item.updatedAt && <UpdatedBadge at={item.updatedAt} />}
+
+      <CardHeader
+        item={item}
+        leading={
+          <Checkbox
+            checked={selected}
+            label={`${item.firstName} ${item.lastName} talebini seç`}
+            onToggle={() => onToggleSelect(item.id)}
+          />
+        }>
+        <View style={styles.cardHeaderActions}>
+          <IconButton
+            icon="edit-2"
+            label="İzni düzenle"
+            tone={colors.primary}
+            onPress={() => onEdit(item)}
+          />
+          <IconButton
+            icon="slash"
+            label="İzni iptal et"
+            tone={colors.canceled}
+            onPress={() => onCancel(item)}
+          />
+        </View>
+      </CardHeader>
+
+      <TypeBadge type={item.leaveType} />
+      <DateRangeBox item={item} />
+
+      {balance && <BalanceBar balance={balance} label="Yıllık izin bakiyesi" />}
+
+      {exceedsBalance && (
+        <Notice
+          icon="alert-triangle"
+          color={colors.danger}
+          text={`Bu talep kalan bakiyeyi ${item.netDays - balance.remaining} gün aşıyor.`}
+        />
+      )}
+
+      {overlaps.length > 0 && (
+        <Notice
+          icon="users"
+          color={colors.warning}
+          text={`Aynı tarihlerde ${item.branch} şubesinden ${overlaps.length} kişi daha izinli.`}
+        />
+      )}
+
+      <ExpandableText text={item.description} />
+
+      <View style={styles.actionRow}>
+        <ActionButton
+          icon="check"
+          label="Onayla"
+          tone={colors.success}
+          tonePressed={colors.successPressed}
+          filled
+          onPress={() => onApprove(item)}
+        />
+        <ActionButton
+          icon="x"
+          label="Reddet"
+          tone={colors.danger}
+          tonePressed={colors.dangerPressed}
+          filled={false}
+          onPress={() => onReject(item)}
+        />
+      </View>
+    </Animated.View>
+  );
+}
+
+function ProcessedCard({ item, index }: { item: LeaveRequest; index: number }) {
+  const { colors } = useDesign();
+  const meta = statusMeta(item.status);
+  const isEmergency = item.status === 'AUTO_APPROVED';
+  const isAdminCreated = item.createdByAdmin === true;
+
+  return (
+    <Animated.View
+      entering={cardEntering(index)}
+      exiting={FadeOutUp.duration(200)}
+      layout={LinearTransition.springify().damping(18)}
+      style={[
+        styles.card,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        Shadow.card,
+      ]}>
+      {/* Sol kenar şeridi durumun rengini taşır — listede tarama hızını artırır */}
+      <View style={[styles.statusStripe, { backgroundColor: meta.color }]} />
+
+      {isEmergency && (
+        <View style={styles.emergencyBanner}>
+          <Feather name="alert-triangle" size={13} color="#FFFFFF" />
+          <ThemedText style={styles.emergencyBannerText}>
+            ACİL — Sistem tarafından onaylandı
+          </ThemedText>
+        </View>
+      )}
+
+      {isAdminCreated && !isEmergency && (
+        <View style={[styles.adminBadge, { backgroundColor: colors.primarySoft }]}>
+          <Feather name="user-check" size={11} color={colors.primary} />
+          <ThemedText style={[styles.adminBadgeText, { color: colors.primary }]}>
+            Admin tarafından oluşturuldu
+          </ThemedText>
+        </View>
+      )}
+
+      {item.updatedAt && <UpdatedBadge at={item.updatedAt} />}
+
+      <CardHeader item={item}>
+        <TypeBadge type={item.leaveType} />
+      </CardHeader>
+
+      <DateRangeBox item={item} />
+      <ExpandableText text={item.description} />
+
+      <View style={styles.statusRow}>
+        <View style={[styles.statusBadge, { backgroundColor: `${meta.color}18` }]}>
+          <Feather name={meta.icon} size={12} color={meta.color} />
+          <ThemedText style={[styles.statusBadgeText, { color: meta.color }]}>
+            {meta.label}
+          </ThemedText>
+        </View>
+        {item.processedAt && (
+          <ThemedText style={[styles.processedAt, { color: colors.textFaint }]}>
+            {item.processedAt}
+          </ThemedText>
+        )}
+      </View>
+
+      {item.status === 'REJECTED' && item.rejectionReason && (
+        <View style={[styles.rejectionBox, { backgroundColor: `${Palette.danger}12` }]}>
+          <ThemedText style={[styles.rejectionLabel, { color: Palette.danger }]}>
+            Ret nedeni
+          </ThemedText>
+          <ThemedText style={[styles.rejectionText, { color: colors.textMuted }]}>
+            {item.rejectionReason}
+          </ThemedText>
+        </View>
+      )}
+    </Animated.View>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────
@@ -87,29 +572,14 @@ export default function LeaveApprovalScreen() {
   const { colors } = useDesign();
 
   const [activeTab, setActiveTab] = useState<Tab>('pending');
-  const [tabRowWidth, setTabRowWidth] = useState(0);
-  // tabRow: borderWidth 1 + padding 3 her iki yanda da var; gösterge bu
-  // içerik kutusunun tam yarısı olmalı, yoksa kenardan taşar.
-  const indicatorWidth = tabRowWidth > 0 ? (tabRowWidth - 2 * 1 - 2 * 3) / 2 : 0;
-  const tabProgress = useSharedValue(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const selectTab = (tab: Tab) => {
     setActiveTab(tab);
-    tabProgress.value = withTiming(tab === 'pending' ? 0 : 1, {
-      duration: 260,
-      easing: Easing.out(Easing.cubic),
-    });
+    setSelectedIds([]);
   };
-
-  const indicatorStyle = useAnimatedStyle(() => ({
-    transform: [{ translateX: tabProgress.value * indicatorWidth }],
-  }));
-  const pendingLabelStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(tabProgress.value, [0, 1], ['#ffffff', colors.textMuted]),
-  }));
-  const historyLabelStyle = useAnimatedStyle(() => ({
-    color: interpolateColor(tabProgress.value, [0, 1], [colors.textMuted, '#ffffff']),
-  }));
 
   // 🔒 Auth store'dan login olan kullanıcı bilgisi
   const authUser = useAuthStore((s) => s.user);
@@ -122,362 +592,384 @@ export default function LeaveApprovalScreen() {
   const rejectRequest = useLeaveRequestsStore((s) => s.rejectRequest);
   const cancelRequest = useLeaveRequestsStore((s) => s.cancelRequest);
   const updateRequest = useLeaveRequestsStore((s) => s.updateRequest);
+  const restoreRequest = useLeaveRequestsStore((s) => s.restoreRequest);
+  const branches = useBranchesStore((s) => s.branches);
 
-  // Türetilmiş listeler — tek kaynak (store) üzerinden ROL BAZLI filtrelenir
-  const pendingList = filterPendingRequests(allRequests, userRole, userBranch);
-  const processedList = filterProcessedRequests(allRequests, userRole, userBranch);
+  // Türetilmiş listeler — tek kaynak (store) üzerinden ROL BAZLI filtrelenir.
+  // Filtreler her çağrıda yeni dizi ürettiği için memoize ediyoruz.
+  const pendingList = useMemo(
+    () => filterPendingRequests(allRequests, userRole, userBranch),
+    [allRequests, userRole, userBranch],
+  );
+  const processedList = useMemo(
+    () => filterProcessedRequests(allRequests, userRole, userBranch),
+    [allRequests, userRole, userBranch],
+  );
+
+  const stats = useMemo(() => {
+    let approved = 0;
+    let rejected = 0;
+    for (const r of processedList) {
+      if (r.status === 'APPROVED' || r.status === 'AUTO_APPROVED') approved++;
+      else if (r.status === 'REJECTED') rejected++;
+    }
+    return { pending: pendingList.length, approved, rejected };
+  }, [pendingList, processedList]);
+
+  /** Arama + (geçmişte) durum filtresi uygulanmış görünen liste */
+  const visibleList = useMemo(() => {
+    const base = activeTab === 'pending' ? pendingList : processedList;
+    const query = searchQuery.trim().toLocaleLowerCase('tr-TR');
+
+    return base.filter((r) => {
+      if (activeTab === 'history' && !matchesStatusFilter(r, statusFilter)) return false;
+      return matchesQuery(r, query);
+    });
+  }, [activeTab, pendingList, processedList, searchQuery, statusFilter]);
+
+  const isFiltering = searchQuery.trim().length > 0 || (activeTab === 'history' && statusFilter !== 'ALL');
+
+  /** Şubenin yıllık izin hakkı — tanımsızsa sistem varsayılanı */
+  const entitlementFor = (branchName: string): number =>
+    branches.find((b) => b.name === branchName)?.defaultLeaveDays ?? DEFAULT_LEAVE_DAYS;
 
   // Reject modal state
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<LeaveRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
+  const [rejectError, setRejectError] = useState('');
 
   // Edit modal state
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [editTarget, setEditTarget] = useState<LeaveRequest | null>(null);
   const [editLeaveType, setEditLeaveType] = useState<LeaveType>('Yıllık');
-  const [editStartDate, setEditStartDate] = useState('');
-  const [editEndDate, setEditEndDate] = useState('');
+  const [editStartDate, setEditStartDate] = useState(new Date());
+  const [editEndDate, setEditEndDate] = useState(new Date());
   const [editDescription, setEditDescription] = useState('');
+  const [editError, setEditError] = useState('');
+
+  const editNetDays = countNetWeekdays(editStartDate, editEndDate);
 
   // ── Actions ────────────────────────────────────────────────────
+  // Tüm işlemler iyimser: önce uygulanır, sonra "Geri al" sunulur. Native
+  // onay/bilgi kutuları (window.confirm/alert) akıştan tamamen kalktı.
+
   const handleApprove = (item: LeaveRequest) => {
-    showConfirm(
-      'İzin Onayı',
-      `${item.firstName} ${item.lastName} adlı çalışanın ${item.netDays} günlük ${item.leaveType} iznini onaylamak istediğinize emin misiniz?`,
-      'Onayla',
-      () => {
-        approveRequest(item.id);
-        showAlert('Başarılı', `${item.firstName} ${item.lastName} adlı çalışanın izni onaylandı.`);
+    approveRequest(item.id);
+    showToast({
+      message: `${item.firstName} ${item.lastName} — ${item.netDays} günlük izin onaylandı.`,
+      tone: 'success',
+      action: { label: 'Geri al', onPress: () => restoreRequest(item) },
+    });
+  };
+
+  const handleCancel = (item: LeaveRequest) => {
+    cancelRequest(item.id);
+    showToast({
+      message: `${item.firstName} ${item.lastName} — izin iptal edildi.`,
+      tone: 'info',
+      action: { label: 'Geri al', onPress: () => restoreRequest(item) },
+    });
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  const approveSelected = () => {
+    // Anlık görüntüleri işlemden ÖNCE alıyoruz ki "Geri al" hepsini geri yazabilsin
+    const snapshots = pendingList.filter((r) => selectedIds.includes(r.id));
+    if (snapshots.length === 0) return;
+
+    snapshots.forEach((r) => approveRequest(r.id));
+    setSelectedIds([]);
+
+    showToast({
+      message: `${snapshots.length} talep onaylandı.`,
+      tone: 'success',
+      action: {
+        label: 'Geri al',
+        onPress: () => snapshots.forEach((r) => restoreRequest(r)),
       },
-    );
+    });
   };
 
   const openRejectModal = (item: LeaveRequest) => {
     setRejectTarget(item);
     setRejectReason('');
+    setRejectError('');
     setRejectModalVisible(true);
   };
 
+  const closeRejectModal = () => {
+    setRejectModalVisible(false);
+    setRejectTarget(null);
+    setRejectReason('');
+    setRejectError('');
+  };
+
+  /**
+   * Modalın kendisi onay adımıdır — üstüne bir de sistem onay kutusu açmıyoruz.
+   * Doğrulama hatası da modal içinde satır olarak gösteriliyor.
+   */
   const confirmReject = () => {
     if (!rejectTarget) return;
 
-    if (rejectReason.trim().length === 0) {
-      showAlert('Hata', 'Reddetme nedeni boş bırakılamaz.');
+    const reason = rejectReason.trim();
+    if (reason.length === 0) {
+      setRejectError('Reddetme nedeni boş bırakılamaz.');
       return;
     }
 
-    showConfirm(
-      'İzin Reddi',
-      `${rejectTarget.firstName} ${rejectTarget.lastName} adlı çalışanın iznini reddetmek istediğinize emin misiniz?`,
-      'Reddet',
-      () => {
-        rejectRequest(rejectTarget.id, rejectReason.trim());
-        setRejectModalVisible(false);
-        setRejectTarget(null);
-        setRejectReason('');
+    const snapshot = rejectTarget;
+    rejectRequest(snapshot.id, reason);
+    closeRejectModal();
 
-        showAlert('İşlem Tamamlandı', `${rejectTarget.firstName} ${rejectTarget.lastName} adlı çalışanın izni reddedildi.`);
-      },
-    );
-  };
-
-  // ── Cancel ─────────────────────────────────────────────────────
-  const handleCancel = (item: LeaveRequest) => {
-    showConfirm(
-      'İzin İptali',
-      `${item.firstName} ${item.lastName} adlı çalışanın ${item.leaveType} iznini iptal etmek istediğinize emin misiniz?\n\nBu işlem geri alınamaz.`,
-      'İptal Et',
-      () => {
-        cancelRequest(item.id);
-        showAlert('İptal Edildi', `${item.firstName} ${item.lastName} adlı çalışanın izni iptal edildi.`);
-      },
-    );
+    showToast({
+      message: `${snapshot.firstName} ${snapshot.lastName} — talep reddedildi.`,
+      tone: 'danger',
+      action: { label: 'Geri al', onPress: () => restoreRequest(snapshot) },
+    });
   };
 
   // ── Edit Modal ─────────────────────────────────────────────────
   const openEditModal = (item: LeaveRequest) => {
     setEditTarget(item);
     setEditLeaveType(item.leaveType);
-    setEditStartDate(item.startDate);
-    setEditEndDate(item.endDate);
+    // Kayıtta tarihler "GG.AA.YYYY" metni olarak duruyor; DateField Date bekliyor
+    setEditStartDate(parseDate(item.startDate) ?? new Date());
+    setEditEndDate(parseDate(item.endDate) ?? new Date());
     setEditDescription(item.description);
+    setEditError('');
     setEditModalVisible(true);
+  };
+
+  const closeEditModal = () => {
+    setEditModalVisible(false);
+    setEditTarget(null);
+    setEditError('');
   };
 
   const confirmEdit = () => {
     if (!editTarget) return;
+
     if (editDescription.trim().length === 0) {
-      showAlert('Hata', 'Açıklama boş bırakılamaz.');
+      setEditError('Açıklama boş bırakılamaz.');
       return;
     }
-    if (editStartDate.trim().length === 0 || editEndDate.trim().length === 0) {
-      showAlert('Hata', 'Tarih alanları boş bırakılamaz.');
+    if (editEndDate < editStartDate) {
+      setEditError('Bitiş tarihi başlangıçtan önce olamaz.');
       return;
     }
 
-    updateRequest(editTarget.id, {
+    const snapshot = editTarget;
+    const becomesEmergency = editLeaveType === 'Acil';
+
+    updateRequest(snapshot.id, {
       leaveType: editLeaveType,
-      startDate: editStartDate.trim(),
-      endDate: editEndDate.trim(),
+      startDate: formatDate(editStartDate),
+      endDate: formatDate(editEndDate),
+      // Tarihler değiştiyse gün sayısı da değişir — eskiden güncellenmiyordu
+      netDays: editNetDays,
       description: editDescription.trim(),
     });
 
-    setEditModalVisible(false);
-    setEditTarget(null);
+    closeEditModal();
 
-    const msg = editLeaveType === 'Acil'
-      ? 'İzin ACİL olarak güncellendi ve otomatik onaylandı.'
-      : 'İzin talebi başarıyla güncellendi.';
-    showAlert('Güncellendi', msg);
+    showToast({
+      message: becomesEmergency
+        ? 'İzin ACİL olarak güncellendi ve otomatik onaylandı.'
+        : 'İzin talebi güncellendi.',
+      tone: becomesEmergency ? 'danger' : 'success',
+      action: { label: 'Geri al', onPress: () => restoreRequest(snapshot) },
+    });
   };
 
-  // ── Card Renderers ─────────────────────────────────────────────
-  const renderPendingCard = ({ item, index }: { item: LeaveRequest; index: number }) => (
-    <Animated.View
-      entering={FadeInDown.delay(index * 50).duration(280).springify().damping(18)}
-      style={[
-        styles.card,
-        {
-          backgroundColor: colors.surface,
-          borderColor: colors.border,
-        },
-        Shadow.card,
-      ]}>
-      {/* Updated badge */}
-      {item.updatedAt && (
-        <View style={[styles.updatedBadge, { backgroundColor: `${Palette.primary}14` }]}>
-          <ThemedText style={[styles.updatedBadgeText, { color: Palette.primary }]}>
-            ✏️ Güncellendi — {item.updatedAt}
-          </ThemedText>
+  const renderItem = ({ item, index }: { item: LeaveRequest; index: number }) =>
+    activeTab === 'pending' ? (
+      <PendingCard
+        item={item}
+        index={index}
+        balance={
+          item.leaveType === 'Yıllık'
+            ? calculateLeaveBalance(allRequests, item, entitlementFor(item.branch))
+            : null
+        }
+        overlaps={findOverlappingLeaves(allRequests, item)}
+        selected={selectedIds.includes(item.id)}
+        onToggleSelect={toggleSelect}
+        onApprove={handleApprove}
+        onReject={openRejectModal}
+        onEdit={openEditModal}
+        onCancel={handleCancel}
+      />
+    ) : (
+      <ProcessedCard item={item} index={index} />
+    );
+
+  /**
+   * Arama ve filtre listeyle birlikte kaysın diye ListHeaderComponent'te.
+   * Element olarak veriliyor (fonksiyon değil) — fonksiyon her render'da yeni
+   * bileşen tipi üretip TextInput'un odağını düşürürdü.
+   */
+  const listHeader = (
+    <View style={styles.listHeader}>
+      <View
+        style={[
+          styles.searchBox,
+          { backgroundColor: colors.surface, borderColor: colors.border },
+        ]}>
+        <Feather name="search" size={15} color={colors.textFaint} />
+        <TextInput
+          style={[styles.searchInput, { color: colors.text }]}
+          placeholder="İsim veya şube ara..."
+          placeholderTextColor={colors.textFaint}
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+          returnKeyType="search"
+        />
+        {searchQuery.length > 0 && (
+          <Pressable
+            onPress={() => setSearchQuery('')}
+            accessibilityRole="button"
+            accessibilityLabel="Aramayı temizle"
+            hitSlop={8}>
+            <Feather name="x" size={15} color={colors.textFaint} />
+          </Pressable>
+        )}
+      </View>
+
+      {activeTab === 'history' && (
+        <View style={styles.filterRow}>
+          {STATUS_FILTERS.map((filter) => {
+            const active = statusFilter === filter.value;
+            return (
+              <Pressable
+                key={filter.value}
+                onPress={() => setStatusFilter(filter.value)}
+                accessibilityRole="button"
+                accessibilityState={{ selected: active }}
+                style={[
+                  styles.filterChip,
+                  {
+                    backgroundColor: active ? colors.primary : 'transparent',
+                    borderColor: active ? colors.primary : colors.border,
+                  },
+                ]}>
+                <ThemedText
+                  style={[styles.filterChipText, { color: active ? '#fff' : colors.textMuted }]}>
+                  {filter.label}
+                </ThemedText>
+              </Pressable>
+            );
+          })}
         </View>
       )}
-
-      {/* Header */}
-      <View style={styles.cardHeader}>
-        <View style={{ flex: 1 }}>
-          <ThemedText style={[styles.cardName, { color: colors.text }]}>
-            {item.firstName} {item.lastName}
-          </ThemedText>
-          <ThemedText style={[styles.cardBranch, { color: colors.textMuted }]}>
-            📍 {item.branch}
-          </ThemedText>
-        </View>
-        <View style={styles.cardHeaderActions}>
-          <Pressable onPress={() => openEditModal(item)} style={[styles.iconBtn, { backgroundColor: `${Palette.primary}14` }]}>
-            <ThemedText style={{ fontSize: 16 }}>✏️</ThemedText>
-          </Pressable>
-          <Pressable onPress={() => handleCancel(item)} style={[styles.iconBtn, { backgroundColor: `${Palette.canceled}14` }]}>
-            <ThemedText style={{ fontSize: 16 }}>🚫</ThemedText>
-          </Pressable>
-        </View>
-      </View>
-
-      {/* Leave type badge */}
-      <View style={[styles.typeBadge, { backgroundColor: colors.primarySoft, alignSelf: 'flex-start' }]}>
-        <ThemedText style={[styles.typeBadgeText, { color: colors.primary }]}>
-          {leaveTypeEmoji(item.leaveType)} {item.leaveType}
-        </ThemedText>
-      </View>
-
-      {/* Date info */}
-      <View style={[styles.dateInfoBox, { backgroundColor: colors.surfaceRaised }]}>
-        <ThemedText style={[styles.dateInfoText, { color: colors.text }]}>
-          📅 {item.startDate} — {item.endDate}
-        </ThemedText>
-        <ThemedText style={[styles.dateInfoDays, { color: colors.primary }]}>
-          {item.netDays} Gün
-        </ThemedText>
-      </View>
-
-      {/* Description */}
-      <ThemedText style={[styles.cardDescription, { color: colors.textMuted }]}>
-        {item.description}
-      </ThemedText>
-
-      {/* Action buttons */}
-      <View style={styles.actionRow}>
-        <Pressable
-          onPress={() => handleApprove(item)}
-          style={({ pressed }) => [
-            styles.actionBtn,
-            {
-              backgroundColor: pressed ? '#1DA84E' : Palette.success,
-            },
-          ]}>
-          <ThemedText style={styles.actionBtnText}>✓ Onayla</ThemedText>
-        </Pressable>
-        <Pressable
-          onPress={() => openRejectModal(item)}
-          style={({ pressed }) => [
-            styles.actionBtn,
-            {
-              backgroundColor: pressed ? '#D63A2F' : Palette.danger,
-            },
-          ]}>
-          <ThemedText style={styles.actionBtnText}>✕ Reddet</ThemedText>
-        </Pressable>
-      </View>
-    </Animated.View>
+    </View>
   );
-
-  const renderProcessedCard = ({ item, index }: { item: LeaveRequest; index: number }) => {
-    const isEmergency = item.status === 'AUTO_APPROVED';
-    const isAdminCreated = item.createdByAdmin === true;
-
-    return (
-      <Animated.View
-        entering={FadeInDown.delay(index * 50).duration(280).springify().damping(18)}
-        style={[
-          styles.card,
-          {
-            backgroundColor: colors.surface,
-            borderColor: isEmergency ? Palette.danger : colors.border,
-            borderWidth: isEmergency ? 2 : 1,
-          },
-          Shadow.card,
-        ]}>
-        {/* Emergency badge — tam genişlik kırmızı banner */}
-        {isEmergency && (
-          <View style={styles.emergencyBanner}>
-            <ThemedText style={styles.emergencyBannerText}>
-              🚨 ACİL — Sistem Tarafından Onaylandı
-            </ThemedText>
-          </View>
-        )}
-
-        {/* Admin tarafından oluşturulmuş rozet */}
-        {isAdminCreated && !isEmergency && (
-          <View style={[styles.adminBadge, { backgroundColor: colors.primarySoft }]}>
-            <ThemedText style={[styles.adminBadgeText, { color: colors.primary }]}>
-              👤 Admin Tarafından Oluşturuldu
-            </ThemedText>
-          </View>
-        )}
-
-        {/* Header */}
-        <View style={styles.cardHeader}>
-          <View style={{ flex: 1 }}>
-            <ThemedText style={[styles.cardName, { color: colors.text }]}>
-              {item.firstName} {item.lastName}
-            </ThemedText>
-            <ThemedText style={[styles.cardBranch, { color: colors.textMuted }]}>
-              📍 {item.branch}
-            </ThemedText>
-          </View>
-          <View style={[styles.typeBadge, { backgroundColor: colors.primarySoft }]}>
-            <ThemedText style={[styles.typeBadgeText, { color: colors.primary }]}>
-              {leaveTypeEmoji(item.leaveType)} {item.leaveType}
-            </ThemedText>
-          </View>
-        </View>
-
-        {/* Date info */}
-        <View style={[styles.dateInfoBox, { backgroundColor: colors.surfaceRaised }]}>
-          <ThemedText style={[styles.dateInfoText, { color: colors.text }]}>
-            📅 {item.startDate} — {item.endDate}
-          </ThemedText>
-          <ThemedText style={[styles.dateInfoDays, { color: colors.primary }]}>
-            {item.netDays} Gün
-          </ThemedText>
-        </View>
-
-        {/* Description */}
-        <ThemedText style={[styles.cardDescription, { color: colors.textMuted }]}>
-          {item.description}
-        </ThemedText>
-
-        {/* Status badge */}
-        <View style={[styles.statusRow]}>
-          <View style={[styles.statusBadge, { backgroundColor: `${statusColor(item.status)}18` }]}>
-            <ThemedText style={[styles.statusBadgeText, { color: statusColor(item.status) }]}>
-              {statusLabel(item.status)}
-            </ThemedText>
-          </View>
-          {item.processedAt && (
-            <ThemedText style={[styles.processedAt, { color: colors.textFaint }]}>
-              {item.processedAt}
-            </ThemedText>
-          )}
-        </View>
-
-        {/* Rejection reason */}
-        {item.status === 'REJECTED' && item.rejectionReason && (
-          <View style={[styles.rejectionBox, { backgroundColor: `${Palette.danger}12` }]}>
-            <ThemedText style={[styles.rejectionLabel, { color: Palette.danger }]}>
-              Ret Nedeni:
-            </ThemedText>
-            <ThemedText style={[styles.rejectionText, { color: colors.textMuted }]}>
-              {item.rejectionReason}
-            </ThemedText>
-          </View>
-        )}
-      </Animated.View>
-    );
-  };
-
-  const currentList = activeTab === 'pending' ? pendingList : processedList;
 
   return (
     <Screen scroll={false}>
       <View style={styles.headerWrap}>
-        <ThemedText type="title" style={styles.pageTitle}>
-          İzin Onay Yönetimi
-        </ThemedText>
-
-        {/* Tab Buttons */}
-        <View
-          style={[styles.tabRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
-          onLayout={(e) => setTabRowWidth(e.nativeEvent.layout.width)}>
-          {tabRowWidth > 0 && (
-            <Animated.View
-              style={[
-                styles.tabIndicator,
-                { backgroundColor: colors.primary, width: indicatorWidth },
-                indicatorStyle,
-              ]}
-            />
-          )}
-          <Pressable onPress={() => selectTab('pending')} style={styles.tabBtn}>
-            <Animated.Text style={[styles.tabBtnText, pendingLabelStyle]}>
-              Bekleyen Talepler
-            </Animated.Text>
-            {pendingList.length > 0 && (
-              <View style={[styles.badge, { backgroundColor: activeTab === 'pending' ? '#fff' : colors.primary }]}>
-                <ThemedText
-                  style={[
-                    styles.badgeText,
-                    { color: activeTab === 'pending' ? colors.primary : '#fff' },
-                  ]}>
-                  {pendingList.length}
-                </ThemedText>
-              </View>
-            )}
-          </Pressable>
-          <Pressable onPress={() => selectTab('history')} style={styles.tabBtn}>
-            <Animated.Text style={[styles.tabBtnText, historyLabelStyle]}>
-              İşlem Görenler
-            </Animated.Text>
-          </Pressable>
+        <View style={styles.titleBlock}>
+          <ThemedText type="title">İzin Onay Yönetimi</ThemedText>
+          <ThemedText style={[styles.pageSubtitle, { color: colors.textMuted }]}>
+            Gelen talepleri onayla, reddet veya düzenle.
+          </ThemedText>
         </View>
+
+        {/* Özet şeridi */}
+        <View style={styles.statRow}>
+          <StatChip icon="clock" label="Bekleyen" value={stats.pending} color={Palette.warning} />
+          <StatChip
+            icon="check-circle"
+            label="Onaylanan"
+            value={stats.approved}
+            color={Palette.success}
+          />
+          <StatChip
+            icon="x-circle"
+            label="Reddedilen"
+            value={stats.rejected}
+            color={Palette.danger}
+          />
+        </View>
+
+        <SegmentedTabs
+          tabs={[
+            { key: 'pending', label: 'Bekleyen Talepler', badge: pendingList.length },
+            { key: 'history', label: 'İşlem Görenler', badge: processedList.length },
+          ]}
+          value={activeTab}
+          onChange={selectTab}
+        />
+
+        {/* Toplu işlem şeridi — sadece seçim varken görünür */}
+        {activeTab === 'pending' && selectedIds.length > 0 && (
+          <Animated.View
+            entering={FadeInDown.duration(200)}
+            exiting={FadeOutUp.duration(160)}
+            style={[
+              styles.selectionBar,
+              { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+            ]}>
+            <ThemedText style={[styles.selectionText, { color: colors.primary }]}>
+              {selectedIds.length} talep seçildi
+            </ThemedText>
+            <Pressable
+              onPress={() => setSelectedIds([])}
+              accessibilityRole="button"
+              hitSlop={8}
+              style={styles.selectionClear}>
+              <ThemedText style={[styles.selectionClearText, { color: colors.textMuted }]}>
+                Temizle
+              </ThemedText>
+            </Pressable>
+            <Pressable
+              onPress={approveSelected}
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.selectionApprove,
+                { backgroundColor: pressed ? colors.successPressed : colors.success },
+              ]}>
+              <Feather name="check" size={14} color="#fff" />
+              <ThemedText style={styles.selectionApproveText}>Onayla</ThemedText>
+            </Pressable>
+          </Animated.View>
+        )}
       </View>
 
       {/* List */}
       <FlatList
-        data={currentList}
+        data={visibleList}
         keyExtractor={(item) => item.id}
-        renderItem={activeTab === 'pending' ? renderPendingCard : renderProcessedCard}
+        renderItem={renderItem}
         style={styles.flatList}
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+        ListHeaderComponent={listHeader}
         ListEmptyComponent={
-          <View style={styles.emptyBox}>
-            <ThemedText style={[styles.emptyText, { color: colors.textFaint }]}>
-              {activeTab === 'pending'
-                ? '🎉 Bekleyen izin talebi bulunmuyor.'
-                : 'Henüz işlem görmüş talep yok.'}
-            </ThemedText>
-          </View>
+          isFiltering ? (
+            <EmptyState
+              icon="search"
+              title="Sonuç bulunamadı"
+              description="Arama veya filtre koşullarını değiştirip tekrar dene."
+            />
+          ) : activeTab === 'pending' ? (
+            <EmptyState
+              icon="check-circle"
+              title="Bekleyen talep yok"
+              description="Tüm izin talepleri işlendi. Yeni bir talep geldiğinde burada görünecek."
+            />
+          ) : (
+            <EmptyState
+              icon="inbox"
+              title="Geçmiş henüz boş"
+              description="Onayladığın, reddettiğin veya iptal ettiğin talepler burada listelenir."
+            />
+          )
         }
       />
 
@@ -486,54 +978,109 @@ export default function LeaveApprovalScreen() {
         visible={rejectModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setRejectModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <ThemedText style={[styles.modalTitle, { color: colors.text }]}>
-              Reddetme Nedeni
+        onRequestClose={closeRejectModal}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Animated.View
+            entering={FadeInDown.duration(220).springify().damping(20)}
+            style={[
+              styles.modalContent,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              Shadow.card,
+            ]}>
+            <View style={styles.modalHeader}>
+              <View style={[styles.modalIcon, { backgroundColor: `${colors.danger}18` }]}>
+                <Feather name="x-circle" size={18} color={colors.danger} />
+              </View>
+              <View style={styles.grow}>
+                <ThemedText style={[styles.modalTitle, { color: colors.text }]}>
+                  Talebi Reddet
+                </ThemedText>
+                {rejectTarget && (
+                  <ThemedText style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                    {rejectTarget.firstName} {rejectTarget.lastName} — {rejectTarget.leaveType} izni
+                  </ThemedText>
+                )}
+              </View>
+            </View>
+
+            <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
+              Hazır gerekçeler
             </ThemedText>
+            <View style={styles.presetRow}>
+              {REJECT_PRESETS.map((preset) => {
+                const active = rejectReason === preset.reason;
+                return (
+                  <Pressable
+                    key={preset.label}
+                    onPress={() => {
+                      setRejectReason(preset.reason);
+                      setRejectError('');
+                    }}
+                    accessibilityRole="button"
+                    style={[
+                      styles.presetChip,
+                      {
+                        backgroundColor: active ? colors.primary : 'transparent',
+                        borderColor: active ? colors.primary : colors.border,
+                      },
+                    ]}>
+                    <ThemedText
+                      style={[styles.presetChipText, { color: active ? '#fff' : colors.text }]}>
+                      {preset.label}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
 
-            {rejectTarget && (
-              <ThemedText style={[styles.modalSubtitle, { color: colors.textMuted }]}>
-                {rejectTarget.firstName} {rejectTarget.lastName} — {rejectTarget.leaveType} İzni
-              </ThemedText>
-            )}
-
+            <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
+              Reddetme nedeni
+            </ThemedText>
             <TextInput
               style={[
                 styles.modalInput,
                 {
                   color: colors.text,
                   backgroundColor: colors.surfaceRaised,
-                  borderColor: colors.border,
+                  borderColor: rejectError ? colors.danger : colors.border,
                 },
               ]}
               placeholder="Ret nedenini açıklayınız..."
               placeholderTextColor={colors.textFaint}
               multiline
+              maxLength={MAX_REJECT_REASON}
               value={rejectReason}
-              onChangeText={setRejectReason}
+              onChangeText={(text) => {
+                setRejectReason(text);
+                if (rejectError) setRejectError('');
+              }}
               autoFocus
             />
+            <ThemedText style={[styles.charCount, { color: colors.textFaint }]}>
+              {rejectReason.length}/{MAX_REJECT_REASON}
+            </ThemedText>
+
+            {rejectError !== '' && (
+              <Notice icon="alert-circle" color={colors.danger} text={rejectError} />
+            )}
 
             <View style={styles.modalActions}>
               <Pressable
-                onPress={() => {
-                  setRejectModalVisible(false);
-                  setRejectTarget(null);
-                  setRejectReason('');
-                }}
+                onPress={closeRejectModal}
+                accessibilityRole="button"
                 style={[styles.modalCancelBtn, { borderColor: colors.border }]}>
                 <ThemedText style={[styles.modalCancelText, { color: colors.textMuted }]}>
-                  İptal
+                  Vazgeç
                 </ThemedText>
               </Pressable>
-              <View style={{ flex: 1 }}>
+              <View style={styles.grow}>
                 <Button label="Reddet" onPress={confirmReject} />
               </View>
             </View>
-          </View>
-        </View>
+          </Animated.View>
+        </KeyboardAvoidingView>
       </Modal>
 
       {/* ─── Edit Modal ─────────────────────────────────────────── */}
@@ -541,22 +1088,37 @@ export default function LeaveApprovalScreen() {
         visible={editModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setEditModalVisible(false)}>
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-            <ThemedText style={[styles.modalTitle, { color: colors.text }]}>
-              İzin Düzenle
-            </ThemedText>
+        onRequestClose={closeEditModal}>
+        <KeyboardAvoidingView
+          style={styles.modalOverlay}
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+          <Animated.View
+            entering={FadeInDown.duration(220).springify().damping(20)}
+            style={[
+              styles.modalContent,
+              { backgroundColor: colors.surface, borderColor: colors.border },
+              Shadow.card,
+            ]}>
+            <View style={styles.modalHeader}>
+              <View style={[styles.modalIcon, { backgroundColor: colors.primarySoft }]}>
+                <Feather name="edit-2" size={18} color={colors.primary} />
+              </View>
+              <View style={styles.grow}>
+                <ThemedText style={[styles.modalTitle, { color: colors.text }]}>
+                  İzni Düzenle
+                </ThemedText>
+                {editTarget && (
+                  <ThemedText style={[styles.modalSubtitle, { color: colors.textMuted }]}>
+                    {editTarget.firstName} {editTarget.lastName} — {editTarget.branch}
+                  </ThemedText>
+                )}
+              </View>
+            </View>
 
-            {editTarget && (
-              <ThemedText style={[styles.modalSubtitle, { color: colors.textMuted }]}>
-                {editTarget.firstName} {editTarget.lastName} — {editTarget.branch}
+            <ScrollView style={styles.editScroll} showsVerticalScrollIndicator={false}>
+              <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
+                İzin türü
               </ThemedText>
-            )}
-
-            <ScrollView style={{ maxHeight: 400 }} showsVerticalScrollIndicator={false}>
-              {/* Leave type chips */}
-              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>İzin Türü</ThemedText>
               <View style={styles.editChipRow}>
                 {LEAVE_TYPES.map((type) => {
                   const active = editLeaveType === type;
@@ -564,6 +1126,7 @@ export default function LeaveApprovalScreen() {
                     <Pressable
                       key={type}
                       onPress={() => setEditLeaveType(type)}
+                      accessibilityRole="button"
                       style={[
                         styles.editChip,
                         {
@@ -571,7 +1134,11 @@ export default function LeaveApprovalScreen() {
                           borderColor: active ? colors.primary : colors.border,
                         },
                       ]}>
-                      <ThemedText style={{ color: active ? '#fff' : colors.text, fontSize: 13, fontWeight: active ? '600' : '400' }}>
+                      <ThemedText
+                        style={[
+                          styles.editChipText,
+                          { color: active ? '#fff' : colors.text, fontWeight: active ? '600' : '400' },
+                        ]}>
                         {leaveTypeEmoji(type)} {type}
                       </ThemedText>
                     </Pressable>
@@ -579,59 +1146,102 @@ export default function LeaveApprovalScreen() {
                 })}
               </View>
 
-              {/* Date fields */}
-              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>Başlangıç Tarihi</ThemedText>
-              <TextInput
-                style={[styles.editInput, { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
-                placeholder="GG.AA.YYYY"
-                placeholderTextColor={colors.textFaint}
-                value={editStartDate}
-                onChangeText={setEditStartDate}
-              />
+              <View style={styles.editDateRow}>
+                <View style={styles.grow}>
+                  <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
+                    Başlangıç
+                  </ThemedText>
+                  <DateField
+                    value={editStartDate}
+                    onChange={(date) => {
+                      setEditStartDate(date);
+                      if (editError) setEditError('');
+                    }}
+                    borderColor={colors.border}
+                  />
+                </View>
+                <View style={styles.grow}>
+                  <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
+                    Bitiş
+                  </ThemedText>
+                  <DateField
+                    value={editEndDate}
+                    minimumDate={editStartDate}
+                    onChange={(date) => {
+                      setEditEndDate(date);
+                      if (editError) setEditError('');
+                    }}
+                    borderColor={colors.border}
+                  />
+                </View>
+              </View>
 
-              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>Bitiş Tarihi</ThemedText>
-              <TextInput
-                style={[styles.editInput, { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
-                placeholder="GG.AA.YYYY"
-                placeholderTextColor={colors.textFaint}
-                value={editEndDate}
-                onChangeText={setEditEndDate}
-              />
+              <View
+                style={[
+                  styles.netDaysBox,
+                  { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+                ]}>
+                <View style={styles.netDaysLeft}>
+                  <Feather name="clock" size={14} color={colors.textMuted} />
+                  <ThemedText style={[styles.netDaysLabel, { color: colors.textMuted }]}>
+                    Hafta sonları hariç
+                  </ThemedText>
+                </View>
+                <ThemedText style={[styles.netDaysValue, { color: colors.primary }]}>
+                  {editNetDays} gün
+                </ThemedText>
+              </View>
 
-              {/* Description */}
-              <ThemedText style={[styles.editLabel, { color: colors.textMuted }]}>Açıklama</ThemedText>
+              <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
+                Açıklama
+              </ThemedText>
               <TextInput
-                style={[styles.modalInput, { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
+                style={[
+                  styles.modalInput,
+                  {
+                    color: colors.text,
+                    backgroundColor: colors.surfaceRaised,
+                    borderColor: colors.border,
+                  },
+                ]}
                 placeholder="İzin açıklaması..."
                 placeholderTextColor={colors.textFaint}
                 multiline
                 value={editDescription}
-                onChangeText={setEditDescription}
+                onChangeText={(text) => {
+                  setEditDescription(text);
+                  if (editError) setEditError('');
+                }}
               />
             </ScrollView>
 
             {editLeaveType === 'Acil' && (
-              <View style={[styles.editWarning, { backgroundColor: `${Palette.danger}14` }]}>
-                <ThemedText style={{ color: Palette.danger, fontSize: 12, fontWeight: '700' }}>
-                  ⚠️ Acil izin seçildi — kaydet butonuna basıldığında otomatik onaylanacaktır.
-                </ThemedText>
-              </View>
+              <Notice
+                icon="alert-triangle"
+                color={colors.danger}
+                text="Acil izin seçildi — kaydedildiğinde otomatik onaylanacaktır."
+              />
+            )}
+
+            {editError !== '' && (
+              <Notice icon="alert-circle" color={colors.danger} text={editError} />
             )}
 
             <View style={styles.modalActions}>
               <Pressable
-                onPress={() => { setEditModalVisible(false); setEditTarget(null); }}
+                onPress={closeEditModal}
+                accessibilityRole="button"
                 style={[styles.modalCancelBtn, { borderColor: colors.border }]}>
                 <ThemedText style={[styles.modalCancelText, { color: colors.textMuted }]}>
                   Vazgeç
                 </ThemedText>
               </Pressable>
-              <View style={{ flex: 1 }}>
+              <View style={styles.grow}>
                 <Button label="Kaydet" onPress={confirmEdit} />
               </View>
             </View>
-          </View>
-        </View>
+          </Animated.View>
+        </KeyboardAvoidingView>
       </Modal>
     </Screen>
   );
@@ -639,6 +1249,8 @@ export default function LeaveApprovalScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────
 const styles = StyleSheet.create({
+  grow: { flex: 1 },
+
   // Screen artık scroll=false yolunda genişlik sınırlamıyor (FlatList'in kendi
   // kaydırma çubuğu ekranın en sağına yapışsın diye) — bu yüzden kaydırmayan
   // başlık/tab alanını burada kendimiz ortalayıp genişlik sınırlıyoruz.
@@ -648,52 +1260,82 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     paddingHorizontal: Space.xl,
     paddingTop: Space.xl,
-    paddingBottom: Space.md,
+    paddingBottom: Space.sm,
     gap: Space.md,
   },
-  pageTitle: {
-    marginTop: Space.sm,
-    marginBottom: Space.md,
+  titleBlock: {
+    gap: Space.xs,
+  },
+  pageSubtitle: {
+    fontSize: 14,
   },
 
-  // Tabs
-  tabRow: {
+  // Özet şeridi
+  statRow: {
     flexDirection: 'row',
-    borderRadius: Radius.md,
-    borderWidth: 1,
-    padding: 3,
-    marginBottom: Space.md,
+    gap: Space.sm,
   },
-  tabIndicator: {
-    position: 'absolute',
-    top: 3,
-    bottom: 3,
-    left: 3,
-    borderRadius: Radius.sm,
-  },
-  tabBtn: {
+  statChip: {
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     gap: Space.sm,
-    paddingVertical: Space.md,
-    borderRadius: Radius.sm,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+    minWidth: 0,
   },
-  tabBtnText: {
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  badge: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
+  statIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: 6,
   },
-  badgeText: {
-    fontSize: 12,
+  statValue: {
+    fontSize: 17,
+    fontWeight: '700',
+    lineHeight: 21,
+  },
+  statLabel: {
+    fontSize: 11,
+    lineHeight: 15,
+  },
+
+  // Toplu işlem şeridi
+  selectionBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.sm,
+  },
+  selectionText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  selectionClear: {
+    paddingVertical: Space.xs,
+  },
+  selectionClearText: {
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  selectionApprove: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    borderRadius: Radius.sm,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
+  selectionApproveText: {
+    color: '#fff',
+    fontSize: 13,
     fontWeight: '700',
   },
 
@@ -713,58 +1355,148 @@ const styles = StyleSheet.create({
     gap: Space.md,
   },
 
+  // Arama + filtre (listeyle birlikte kayar)
+  listHeader: {
+    gap: Space.sm,
+    paddingBottom: Space.xs,
+  },
+  searchBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Platform.OS === 'web' ? 10 : 6,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    paddingVertical: 4,
+    // Web'de input'un varsayılan odak çerçevesi kutunun içinde çift çizgi yapıyor
+    ...Platform.select({ web: { outlineStyle: 'none' } as object, default: {} }),
+  },
+  filterRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  filterChip: {
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Space.md,
+    paddingVertical: 6,
+  },
+  filterChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
   // Card (inline, not using <Card> for extra control)
   card: {
     borderRadius: Radius.lg,
     borderWidth: 1,
     padding: Space.xl,
     gap: Space.md,
+    // Durum şeridinin köşeleri karta göre kırpılsın
+    overflow: 'hidden',
+  },
+  statusStripe: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
   },
   cardHeader: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: Space.sm,
+  },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1.5,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   cardName: {
     fontSize: 16,
     fontWeight: '700',
   },
+  branchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    marginTop: 2,
+  },
   cardBranch: {
     fontSize: 13,
-    marginTop: 2,
+    flexShrink: 1,
   },
   typeBadge: {
     paddingHorizontal: Space.md,
     paddingVertical: 5,
     borderRadius: Radius.pill,
+    alignSelf: 'flex-start',
   },
   typeBadgeText: {
     fontSize: 12,
     fontWeight: '600',
   },
 
-  // Date info
-  dateInfoBox: {
+  // Tarih aralığı
+  // surfaceRaised açık modda surface ile aynı beyaz — kenarlık olmadan kutu kaybolur
+  dateBox: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: Space.md,
+    borderWidth: 1,
     paddingHorizontal: Space.lg,
     paddingVertical: Space.md,
     borderRadius: Radius.md,
   },
-  dateInfoText: {
-    fontSize: 14,
-    fontWeight: '500',
+  dateRange: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
   },
-  dateInfoDays: {
+  dateLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    lineHeight: 14,
+  },
+  dateValue: {
     fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 19,
+  },
+  dayPill: {
+    paddingHorizontal: Space.md,
+    paddingVertical: 4,
+    borderRadius: Radius.pill,
+  },
+  dayPillText: {
+    fontSize: 13,
     fontWeight: '700',
   },
 
   // Description
+  descWrap: {
+    gap: 2,
+  },
   cardDescription: {
     fontSize: 14,
     lineHeight: 20,
+  },
+  moreLink: {
+    fontSize: 13,
+    fontWeight: '600',
   },
 
   // Action buttons
@@ -773,15 +1505,18 @@ const styles = StyleSheet.create({
     gap: Space.md,
     marginTop: Space.xs,
   },
-  actionBtn: {
+  actionPressable: {
     flex: 1,
-    paddingVertical: 13,
-    borderRadius: Radius.md,
+  },
+  actionBtn: {
+    flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
+    gap: Space.sm,
+    paddingVertical: 12,
+    borderRadius: Radius.md,
   },
   actionBtnText: {
-    color: '#fff',
     fontSize: 15,
     fontWeight: '700',
   },
@@ -795,6 +1530,9 @@ const styles = StyleSheet.create({
     gap: Space.sm,
   },
   statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     paddingHorizontal: Space.md,
     paddingVertical: 5,
     borderRadius: Radius.pill,
@@ -809,21 +1547,27 @@ const styles = StyleSheet.create({
 
   // Emergency — tam genişlik kırmızı banner
   emergencyBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space.sm,
     backgroundColor: Palette.danger,
     paddingHorizontal: Space.md,
     paddingVertical: Space.md,
     borderRadius: Radius.sm,
-    alignItems: 'center',
   },
   emergencyBannerText: {
     color: '#FFFFFF',
     fontSize: 13,
     fontWeight: '800',
-    letterSpacing: 0.5,
+    letterSpacing: 0.3,
   },
 
   // Admin oluşturma rozeti
   adminBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     paddingHorizontal: Space.md,
     paddingVertical: Space.sm,
     borderRadius: Radius.sm,
@@ -837,11 +1581,11 @@ const styles = StyleSheet.create({
   // Card header icon buttons
   cardHeaderActions: {
     flexDirection: 'row',
-    gap: Space.sm,
+    gap: Space.xs,
   },
   iconBtn: {
-    width: 36,
-    height: 36,
+    width: 44,
+    height: 44,
     borderRadius: Radius.sm,
     alignItems: 'center',
     justifyContent: 'center',
@@ -849,6 +1593,9 @@ const styles = StyleSheet.create({
 
   // Updated badge
   updatedBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
     paddingHorizontal: Space.md,
     paddingVertical: Space.xs,
     borderRadius: Radius.sm,
@@ -857,36 +1604,6 @@ const styles = StyleSheet.create({
   updatedBadgeText: {
     fontSize: 11,
     fontWeight: '700',
-  },
-
-  // Edit modal extras
-  editLabel: {
-    fontSize: 13,
-    marginBottom: Space.xs,
-    marginTop: Space.md,
-  },
-  editChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Space.sm,
-  },
-  editChip: {
-    borderWidth: 1,
-    borderRadius: Radius.pill,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.sm,
-  },
-  editInput: {
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.lg,
-    paddingVertical: 12,
-    fontSize: 15,
-  },
-  editWarning: {
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.sm,
-    borderRadius: Radius.sm,
   },
 
   // Rejection reason
@@ -902,15 +1619,7 @@ const styles = StyleSheet.create({
   },
   rejectionText: {
     fontSize: 13,
-  },
-
-  // Empty state
-  emptyBox: {
-    alignItems: 'center',
-    paddingVertical: Space.xxl * 2,
-  },
-  emptyText: {
-    fontSize: 15,
+    lineHeight: 18,
   },
 
   // Modal
@@ -921,26 +1630,52 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.xl,
   },
   modalContent: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
     borderRadius: Radius.lg,
     borderWidth: 1,
     padding: Space.xl,
+    gap: Space.sm,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: Space.md,
+    marginBottom: Space.xs,
+  },
+  modalIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: Radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   modalTitle: {
     fontSize: 18,
     fontWeight: '700',
   },
   modalSubtitle: {
-    fontSize: 14,
+    fontSize: 13,
+  },
+  fieldLabel: {
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: Space.sm,
+    marginBottom: Space.xs,
   },
   modalInput: {
     borderWidth: 1,
     borderRadius: Radius.md,
     paddingHorizontal: Space.lg,
     paddingVertical: 14,
-    fontSize: 16,
-    minHeight: 100,
+    fontSize: 15,
+    minHeight: 96,
     textAlignVertical: 'top',
+  },
+  charCount: {
+    fontSize: 11,
+    textAlign: 'right',
   },
   modalActions: {
     flexDirection: 'row',
@@ -958,5 +1693,67 @@ const styles = StyleSheet.create({
   modalCancelText: {
     fontSize: 16,
     fontWeight: '600',
+  },
+
+  // Hazır ret gerekçeleri
+  presetRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  presetChip: {
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Space.md,
+    paddingVertical: 7,
+  },
+  presetChipText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+
+  // Edit modal
+  editScroll: {
+    maxHeight: 380,
+  },
+  editChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  editChip: {
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+  },
+  editChipText: {
+    fontSize: 13,
+  },
+  editDateRow: {
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  netDaysBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.lg,
+    paddingVertical: Space.md,
+    marginTop: Space.md,
+  },
+  netDaysLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+  },
+  netDaysLabel: {
+    fontSize: 13,
+  },
+  netDaysValue: {
+    fontSize: 15,
+    fontWeight: '700',
   },
 });

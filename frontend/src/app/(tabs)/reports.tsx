@@ -1,17 +1,38 @@
-import { StyleSheet } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { ThemedView } from '@/components/themed-view';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Screen } from '@/components/ui/screen';
+import { Space } from '@/constants/design';
+import { useDesign } from '@/hooks/use-design';
 
 export default function ReportsScreen() {
+  const { colors } = useDesign();
+
   return (
-    <ThemedView style={styles.container}>
-      <ThemedText type="subtitle">Raporlar</ThemedText>
-      <ThemedText type="small">Burası yakında dolacak.</ThemedText>
-    </ThemedView>
+    <Screen>
+      <View style={styles.header}>
+        <ThemedText type="title">Raporlar</ThemedText>
+        <ThemedText style={[styles.subtitle, { color: colors.textMuted }]}>
+          İzin kullanımı ve onay istatistikleri.
+        </ThemedText>
+      </View>
+
+      <EmptyState
+        icon="bar-chart-2"
+        title="Raporlar hazırlanıyor"
+        description="İzin türü dağılımı, şube bazlı kullanım ve ortalama onay süresi bu ekranda listelenecek."
+      />
+    </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, justifyContent: 'center', alignItems: 'center', gap: 8 },
+  header: {
+    marginTop: Space.sm,
+    gap: Space.xs,
+  },
+  subtitle: {
+    fontSize: 14,
+  },
 });

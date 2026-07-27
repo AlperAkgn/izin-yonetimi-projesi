@@ -1,40 +1,45 @@
-import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput, View } from 'react-native';
+import Feather from '@expo/vector-icons/Feather';
+import { useMemo, useState } from 'react';
+import {
+  FlatList,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import Animated, { FadeInDown, LinearTransition } from 'react-native-reanimated';
 
 import { DateField } from '@/components/date-field';
 import { ThemedText } from '@/components/themed-text';
+import { BalanceBar } from '@/components/ui/balance-bar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
+import { EmptyState } from '@/components/ui/empty-state';
+import { LabeledInput } from '@/components/ui/labeled-input';
+import { Notice } from '@/components/ui/notice';
 import { Screen } from '@/components/ui/screen';
-import { Radius, Space } from '@/constants/design';
+import { SectionHeader } from '@/components/ui/section-header';
+import { SegmentedTabs } from '@/components/ui/segmented-tabs';
+import { Radius, Shadow, Space } from '@/constants/design';
+import { LEAVE_TYPES, leaveTypeEmoji, statusMeta } from '@/constants/leave';
 import { useDesign } from '@/hooks/use-design';
+import { DEFAULT_LEAVE_DAYS } from '@/services/branches';
 import { useAuthStore } from '@/store/authStore';
-import { useLeaveRequestsStore } from '@/store/leaveRequestsStore';
-import { showAlert } from '@/utils/alert';
+import { useBranchesStore } from '@/store/branchesStore';
+import {
+  calculateLeaveBalance,
+  filterOwnRequests,
+  findOverlappingLeaves,
+  useLeaveRequestsStore,
+} from '@/store/leaveRequestsStore';
+import { showToast } from '@/store/toastStore';
+import { countNetWeekdays, formatDate } from '@/utils/date';
 import { normalizePhone } from '@/utils/phone';
 
-import type { LeaveType } from '@/store/leaveRequestsStore';
-
-const LEAVE_TYPES: LeaveType[] = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'];
+import type { LeaveRequest, LeaveType } from '@/store/leaveRequestsStore';
 
 const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
-
-function isValidPhone(phone: string) {
-  const cleaned = phone.replace(/[\s()-]/g, '');
-  return PHONE_REGEX.test(cleaned);
-}
-
-function countNetWeekdays(start: Date, end: Date) {
-  if (end < start) return 0;
-  let count = 0;
-  const cursor = new Date(start);
-  while (cursor <= end) {
-    const day = cursor.getDay();
-    if (day !== 0 && day !== 6) count++;
-    cursor.setDate(cursor.getDate() + 1);
-  }
-  return count;
-}
 
 // Karakter limitleri
 const LIMITS = {
@@ -43,19 +48,121 @@ const LIMITS = {
   leaveAddress: 200,
 } as const;
 
-/** Karakter sayacı bileşeni */
-function CharCounter({ current, max, color }: { current: number; max: number; color: string }) {
+/** Taslak talebin bakiye/çakışma hesaplarında kullandığı geçici kimlik */
+const DRAFT_ID = '__draft__';
+
+type Tab = 'new' | 'mine';
+
+function isValidPhone(phone: string) {
+  const cleaned = phone.replace(/[\s()-]/g, '');
+  return PHONE_REGEX.test(cleaned);
+}
+
+// ─── Alan doğrulayıcıları ─────────────────────────────────────────
+// "Boş bırakılamaz" uyarıları SADECE gönderimde çıkar. Alanlar arasında
+// gezerken henüz doldurmadığın her alan için kırmızı mesaj görmek rahatsız
+// ediciydi. onBlur'da yalnızca BİÇİM hatası (dolu ama geçersiz) gösteriliyor.
+
+/** onBlur: dolu ama hatalı numarayı anında söyler, boş alana karışmaz */
+function validatePhoneFormat(value: string) {
+  if (value.trim().length === 0) return undefined;
+  return isValidPhone(value) ? undefined : 'Geçerli bir numara gir (örn: 05XX XXX XX XX).';
+}
+
+function validateDescription(value: string) {
+  return value.trim().length === 0 ? 'Açıklama boş bırakılamaz.' : undefined;
+}
+
+function validatePhone(value: string) {
+  if (value.trim().length === 0) return 'Acil durum iletişimi boş bırakılamaz.';
+  return validatePhoneFormat(value);
+}
+
+function validateAddress(value: string) {
+  return value.trim().length === 0 ? 'İzinde bulunacağın adres boş bırakılamaz.' : undefined;
+}
+
+// ─── Kendi talep kartı ────────────────────────────────────────────
+function MyRequestCard({ item, index }: { item: LeaveRequest; index: number }) {
+  const { colors } = useDesign();
+  const meta = statusMeta(item.status);
+
   return (
-    <ThemedText style={[styles.charCounter, { color }]}>
-      {current}/{max}
-    </ThemedText>
+    <Animated.View
+      entering={FadeInDown.delay(Math.min(index, 6) * 50)
+        .duration(280)
+        .springify()
+        .damping(18)}
+      layout={LinearTransition.springify().damping(18)}
+      style={[
+        styles.myCard,
+        { backgroundColor: colors.surface, borderColor: colors.border },
+        Shadow.card,
+      ]}>
+      <View style={[styles.statusStripe, { backgroundColor: meta.color }]} />
+
+      <View style={styles.myCardHead}>
+        <View style={[styles.typeBadge, { backgroundColor: colors.primarySoft }]}>
+          <ThemedText style={[styles.typeBadgeText, { color: colors.primary }]}>
+            {leaveTypeEmoji(item.leaveType)} {item.leaveType}
+          </ThemedText>
+        </View>
+        <View style={[styles.statusBadge, { backgroundColor: `${meta.color}18` }]}>
+          <Feather name={meta.icon} size={12} color={meta.color} />
+          <ThemedText style={[styles.statusBadgeText, { color: meta.color }]}>
+            {meta.label}
+          </ThemedText>
+        </View>
+      </View>
+
+      <View style={styles.myCardDates}>
+        <Feather name="calendar" size={13} color={colors.textFaint} />
+        <ThemedText style={[styles.myCardDateText, { color: colors.text }]}>
+          {item.startDate} → {item.endDate}
+        </ThemedText>
+        <View style={[styles.dayPill, { backgroundColor: colors.primarySoft }]}>
+          <ThemedText style={[styles.dayPillText, { color: colors.primary }]}>
+            {item.netDays} gün
+          </ThemedText>
+        </View>
+      </View>
+
+      <ThemedText style={[styles.myCardDescription, { color: colors.textMuted }]} numberOfLines={2}>
+        {item.description}
+      </ThemedText>
+
+      {item.status === 'REJECTED' && item.rejectionReason && (
+        <View style={[styles.rejectionBox, { backgroundColor: `${colors.danger}12` }]}>
+          <ThemedText style={[styles.rejectionLabel, { color: colors.danger }]}>
+            Ret nedeni
+          </ThemedText>
+          <ThemedText style={[styles.rejectionText, { color: colors.textMuted }]}>
+            {item.rejectionReason}
+          </ThemedText>
+        </View>
+      )}
+
+      {item.processedAt && (
+        <ThemedText style={[styles.processedAt, { color: colors.textFaint }]}>
+          İşlem: {item.processedAt}
+        </ThemedText>
+      )}
+    </Animated.View>
   );
 }
 
+// ─── Ekran ────────────────────────────────────────────────────────
 export default function LeaveRequestsScreen() {
   const { colors } = useDesign();
+  const { width } = useWindowDimensions();
+  const stackFields = width < 640; // ikili alanlar dar ekranda alt alta
+
+  const [tab, setTab] = useState<Tab>('new');
+
   const addRequest = useLeaveRequestsStore((s) => s.addRequest);
+  const allRequests = useLeaveRequestsStore((s) => s.requests);
   const authUser = useAuthStore((s) => s.user);
+  const branches = useBranchesStore((s) => s.branches);
 
   const [selectedType, setSelectedType] = useState<LeaveType>('Yıllık');
   const [startDate, setStartDate] = useState(new Date());
@@ -63,12 +170,73 @@ export default function LeaveRequestsScreen() {
   const [description, setDescription] = useState('');
   const [emergencyContact, setEmergencyContact] = useState('');
   const [leaveAddress, setLeaveAddress] = useState('');
-  const [error, setError] = useState('');
+
+  const [dateError, setDateError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{
+    description?: string;
+    emergencyContact?: string;
+    leaveAddress?: string;
+  }>({});
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const netDays = countNetWeekdays(startDate, endDate);
 
+  // İzin kayıtları kişiyi ad + soyad + şube ile tutuyor
+  const firstName = authUser?.name?.split(' ')[0] ?? 'Bilinmeyen';
+  const lastName = authUser?.name?.split(' ').slice(1).join(' ') ?? '';
+  const branchName = authUser?.branchName ?? 'Bilinmeyen Şube';
+
+  const entitlement =
+    branches.find((b) => b.id === authUser?.branchId)?.defaultLeaveDays ?? DEFAULT_LEAVE_DAYS;
+
+  const myRequests = useMemo(
+    () => filterOwnRequests(allRequests, { firstName, lastName, branch: branchName }),
+    [allRequests, firstName, lastName, branchName],
+  );
+
+  /** Bakiye ve çakışma hesapları henüz kaydedilmemiş talep üzerinden yapılır */
+  const draft = useMemo<LeaveRequest>(
+    () => ({
+      id: DRAFT_ID,
+      firstName,
+      lastName,
+      branch: branchName,
+      leaveType: selectedType,
+      startDate: formatDate(startDate),
+      endDate: formatDate(endDate),
+      netDays,
+      description: '',
+      status: 'PENDING',
+    }),
+    [firstName, lastName, branchName, selectedType, startDate, endDate, netDays],
+  );
+
+  const balance = useMemo(
+    () => calculateLeaveBalance(allRequests, draft, entitlement),
+    [allRequests, draft, entitlement],
+  );
+
+  const overlaps = useMemo(() => findOverlappingLeaves(allRequests, draft), [allRequests, draft]);
+
+  const consumesBalance = selectedType === 'Yıllık';
+  const afterRequest = Math.max(balance.remaining - netDays, 0);
+  const exceedsBalance = consumesBalance && netDays > balance.remaining;
+
+  // ── Tarih davranışı ────────────────────────────────────────────
+  /** Başlangıç bitişi geçerse bitişi de ileri alıyoruz — aralık hiç geçersiz kalmasın */
+  const handleStartChange = (date: Date) => {
+    setStartDate(date);
+    if (endDate < date) setEndDate(date);
+    setDateError('');
+  };
+
+  const handleEndChange = (date: Date) => {
+    setEndDate(date);
+    setDateError('');
+  };
+
+  // ── Form ───────────────────────────────────────────────────────
   const resetForm = () => {
     setSelectedType('Yıllık');
     setStartDate(new Date());
@@ -76,47 +244,35 @@ export default function LeaveRequestsScreen() {
     setDescription('');
     setEmergencyContact('');
     setLeaveAddress('');
+    setDateError('');
+    setFieldErrors({});
   };
 
   const handleSubmit = () => {
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
 
-    if (start < today) {
-      setError('Geçmiş bir tarih için izin talebi oluşturamazsın');
-      return;
-    }
-    if (endDate < startDate) {
-      setError('Bitiş tarihi başlangıçtan önce olamaz');
-      return;
-    }
-    if (description.trim().length === 0) {
-      setError('Açıklama boş bırakılamaz');
-      return;
-    }
-    if (!isValidPhone(emergencyContact)) {
-      setError('Geçerli bir telefon numarası gir (örn: 05XX XXX XX XX)');
-      return;
-    }
-    if (leaveAddress.trim().length === 0) {
-      setError('İzinde bulunacağınız adres boş bırakılamaz');
-      return;
-    }
-    setError('');
+    let dateMessage = '';
+    if (start < today) dateMessage = 'Geçmiş bir tarih için izin talebi oluşturamazsın.';
+    else if (endDate < startDate) dateMessage = 'Bitiş tarihi başlangıçtan önce olamaz.';
 
-    // Tarihleri DD.MM.YYYY formatına çevir
-    const formatDate = (d: Date): string => {
-      const dd = String(d.getDate()).padStart(2, '0');
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const yyyy = d.getFullYear();
-      return `${dd}.${mm}.${yyyy}`;
+    const nextFieldErrors = {
+      description: validateDescription(description),
+      emergencyContact: validatePhone(emergencyContact),
+      leaveAddress: validateAddress(leaveAddress),
     };
 
-    // Store'a ekle — İzin Onay ekranında anlık listelenir
+    setDateError(dateMessage);
+    setFieldErrors(nextFieldErrors);
+
+    const hasError =
+      dateMessage !== '' || Object.values(nextFieldErrors).some((m) => m !== undefined);
+    if (hasError) return;
+
     addRequest({
-      firstName: authUser?.name?.split(' ')[0] ?? 'Bilinmeyen',
-      lastName: authUser?.name?.split(' ').slice(1).join(' ') ?? '',
-      branch: authUser?.branchName ?? 'Bilinmeyen Şube',
+      firstName,
+      lastName,
+      branch: branchName,
       leaveType: selectedType,
       startDate: formatDate(startDate),
       endDate: formatDate(endDate),
@@ -125,199 +281,508 @@ export default function LeaveRequestsScreen() {
       createdByAdmin: false,
     });
 
-    console.log('İzin talebi store\'a eklendi:', {
-      type: selectedType,
-      startDate: formatDate(startDate),
-      endDate: formatDate(endDate),
-      netDays,
-      description,
-      emergencyContact,
-      leaveAddress: leaveAddress.trim(),
-    });
+    const isEmergency = selectedType === 'Acil';
+    resetForm();
+    // Gönderdikten sonra listeye geçiyoruz: talep gerçekten kaydedildi mi
+    // sorusunun cevabı hemen ekranda olsun.
+    setTab('mine');
 
-    showAlert('Talep oluşturuldu', 'İzin talebin başarıyla oluşturuldu.\n\nİzin Onay ekranında "Bekleyen Talepler" sekmesinde görüntüleyebilirsiniz.', resetForm);
+    showToast({
+      message: isEmergency
+        ? `${netDays} günlük acil izin oluşturuldu ve otomatik onaylandı.`
+        : `${netDays} günlük ${selectedType} talebin onaya gönderildi.`,
+      tone: isEmergency ? 'danger' : 'success',
+    });
   };
 
+  const divider = <View style={[styles.divider, { backgroundColor: colors.border }]} />;
+
+  const balanceStrip = (
+    <BalanceBar
+      balance={balance}
+      label="Yıllık izin bakiyen"
+      variant="card"
+      hint={
+        tab === 'new' && consumesBalance && netDays > 0
+          ? `Bu talep ${netDays} gün düşecek → ${afterRequest} gün kalır`
+          : undefined
+      }
+    />
+  );
+
   return (
-    <Screen>
-      <ThemedText type="title" style={styles.pageTitle}>
-        Yeni İzin Talebi
-      </ThemedText>
-
-      <Card>
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzin kategorisi</ThemedText>
-        <View style={styles.chipRow}>
-          {LEAVE_TYPES.map((type) => {
-            const active = selectedType === type;
-            return (
-              <Pressable
-                key={type}
-                onPress={() => setSelectedType(type)}
-                style={[
-                  styles.chip,
-                  {
-                    backgroundColor: active ? colors.primary : 'transparent',
-                    borderColor: active ? colors.primary : colors.border,
-                  },
-                ]}>
-                <ThemedText
-                  style={{ color: active ? '#fff' : colors.text, fontWeight: active ? '600' : '400' }}>
-                  {type}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.dateRow}>
-          <View style={styles.dateCol}>
-            <ThemedText style={[styles.label, { color: colors.textMuted }]}>Başlangıç</ThemedText>
-            <DateField
-              value={startDate}
-              minimumDate={new Date()}
-              onChange={setStartDate}
-              borderColor={colors.border}
-            />
-          </View>
-          <View style={styles.dateCol}>
-            <ThemedText style={[styles.label, { color: colors.textMuted }]}>Bitiş</ThemedText>
-            <DateField
-              value={endDate}
-              minimumDate={startDate}
-              onChange={setEndDate}
-              borderColor={colors.border}
-            />
-          </View>
-        </View>
-
-        <View style={[styles.netDaysBox, { backgroundColor: colors.primarySoft }]}>
-          <ThemedText style={[styles.netDaysText, { color: colors.primary }]}>
-            Hafta sonları hariç net {netDays} gün düşülecek
+    <Screen scroll={false}>
+      <View style={styles.headerWrap}>
+        <View style={styles.titleBlock}>
+          <ThemedText type="title">İzinlerim</ThemedText>
+          <ThemedText style={[styles.pageSubtitle, { color: colors.textMuted }]}>
+            Yeni talep oluştur veya mevcut taleplerini takip et.
           </ThemedText>
         </View>
 
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Açıklama</ThemedText>
-        <TextInput
-          style={[
-            styles.textArea,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+        {balanceStrip}
+
+        <SegmentedTabs
+          tabs={[
+            { key: 'new', label: 'Yeni Talep' },
+            { key: 'mine', label: 'Taleplerim', badge: myRequests.length },
           ]}
-          placeholder="İzin sebebini kısaca yaz"
-          placeholderTextColor={colors.textFaint}
-          multiline
-          value={description}
-          onChangeText={setDescription}
-          maxLength={LIMITS.description}
+          value={tab}
+          onChange={setTab}
         />
-        <CharCounter current={description.length} max={LIMITS.description} color={colors.textFaint} />
+      </View>
 
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Acil durum iletişim</ThemedText>
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="05XX XXX XX XX"
-          placeholderTextColor={colors.textFaint}
-          keyboardType="phone-pad"
-          value={emergencyContact}
-          onChangeText={setEmergencyContact}
-          onBlur={() => setEmergencyContact(normalizePhone(emergencyContact))}
-          maxLength={LIMITS.emergencyContact}
+      {tab === 'new' ? (
+        <ScrollView
+          style={styles.flex}
+          contentContainerStyle={styles.formContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator>
+          <Card>
+            {/* ── İzin Bilgileri ─────────────────────────────── */}
+            <View style={styles.section}>
+              <SectionHeader
+                icon="calendar"
+                title="İzin Bilgileri"
+                subtitle="Tür ve tarih aralığı"
+              />
+
+              <View style={styles.chipRow}>
+                {LEAVE_TYPES.map((type) => {
+                  const active = selectedType === type;
+                  return (
+                    <Pressable
+                      key={type}
+                      onPress={() => setSelectedType(type)}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: active }}
+                      style={[
+                        styles.chip,
+                        {
+                          backgroundColor: active ? colors.primary : 'transparent',
+                          borderColor: active ? colors.primary : colors.border,
+                        },
+                      ]}>
+                      <ThemedText
+                        style={[
+                          styles.chipText,
+                          {
+                            color: active ? '#fff' : colors.text,
+                            fontWeight: active ? '600' : '400',
+                          },
+                        ]}>
+                        {leaveTypeEmoji(type)} {type}
+                      </ThemedText>
+                    </Pressable>
+                  );
+                })}
+              </View>
+
+              {/* Acil izin onay sürecini tamamen atlıyor — talebi gönderen bunu bilmeli */}
+              {selectedType === 'Acil' && (
+                <Notice
+                  icon="alert-triangle"
+                  color={colors.danger}
+                  text="Acil izinler onaya düşmez; kaydedildiği anda sistem tarafından otomatik onaylanır."
+                />
+              )}
+
+              <View style={[styles.fieldRow, stackFields && styles.fieldRowStacked]}>
+                <View style={stackFields ? undefined : styles.field}>
+                  <ThemedText style={[styles.label, { color: colors.textMuted }]}>
+                    Başlangıç
+                  </ThemedText>
+                  <DateField
+                    value={startDate}
+                    minimumDate={today}
+                    onChange={handleStartChange}
+                    borderColor={colors.border}
+                  />
+                </View>
+                <View style={stackFields ? undefined : styles.field}>
+                  <ThemedText style={[styles.label, { color: colors.textMuted }]}>
+                    Bitiş
+                  </ThemedText>
+                  <DateField
+                    value={endDate}
+                    minimumDate={startDate}
+                    onChange={handleEndChange}
+                    borderColor={colors.border}
+                  />
+                </View>
+              </View>
+
+              {/* Eski tam genişlik banner yerine tek satırlık özet */}
+              <View style={styles.netDaysRow}>
+                <Feather name="clock" size={13} color={colors.textMuted} />
+                <ThemedText style={[styles.netDaysText, { color: colors.textMuted }]}>
+                  Hafta sonları hariç
+                </ThemedText>
+                <View style={[styles.dayPill, { backgroundColor: colors.primarySoft }]}>
+                  <ThemedText style={[styles.dayPillText, { color: colors.primary }]}>
+                    {netDays} gün
+                  </ThemedText>
+                </View>
+              </View>
+
+              {dateError !== '' && (
+                <Notice icon="alert-circle" color={colors.danger} text={dateError} />
+              )}
+
+              {exceedsBalance && (
+                <Notice
+                  icon="alert-triangle"
+                  color={colors.danger}
+                  text={`Bu talep kalan bakiyeni ${netDays - balance.remaining} gün aşıyor.`}
+                />
+              )}
+
+              {overlaps.length > 0 && (
+                <Notice
+                  icon="users"
+                  color={colors.warning}
+                  text={`Bu tarihlerde şubenden ${overlaps.length} kişi daha izinli — onay gecikebilir.`}
+                />
+              )}
+            </View>
+
+            {divider}
+
+            {/* ── Detaylar ───────────────────────────────────── */}
+            <View style={styles.section}>
+              <SectionHeader
+                icon="file-text"
+                title="Detaylar"
+                subtitle="Açıklama, adres ve acil durum iletişimi"
+              />
+
+              <View style={[styles.fieldRow, stackFields && styles.fieldRowStacked]}>
+                <View style={stackFields ? undefined : styles.field}>
+                  <LabeledInput
+                    label="Açıklama"
+                    placeholder="İzin sebebini kısaca yaz"
+                    multiline
+                    maxLength={LIMITS.description}
+                    value={description}
+                    error={fieldErrors.description}
+                    onChangeText={(text) => {
+                      setDescription(text);
+                      if (fieldErrors.description) {
+                        setFieldErrors((p) => ({ ...p, description: undefined }));
+                      }
+                    }}
+                    style={styles.textArea}
+                  />
+                </View>
+                <View style={stackFields ? undefined : styles.field}>
+                  <LabeledInput
+                    label="İzinde bulunacağın adres"
+                    placeholder="İzin süresince bulunacağın adres"
+                    multiline
+                    maxLength={LIMITS.leaveAddress}
+                    value={leaveAddress}
+                    error={fieldErrors.leaveAddress}
+                    onChangeText={(text) => {
+                      setLeaveAddress(text);
+                      if (fieldErrors.leaveAddress) {
+                        setFieldErrors((p) => ({ ...p, leaveAddress: undefined }));
+                      }
+                    }}
+                    style={styles.textArea}
+                  />
+                </View>
+              </View>
+
+              {/* Üstteki iki alanın toplam genişliği boyunca uzanır */}
+              <View>
+                <LabeledInput
+                  label="Acil durum iletişim"
+                  placeholder="05XX XXX XX XX"
+                  keyboardType="phone-pad"
+                  maxLength={LIMITS.emergencyContact}
+                  value={emergencyContact}
+                  error={fieldErrors.emergencyContact}
+                  onChangeText={(text) => {
+                    setEmergencyContact(text);
+                    if (fieldErrors.emergencyContact) {
+                      setFieldErrors((p) => ({ ...p, emergencyContact: undefined }));
+                    }
+                  }}
+                  onBlur={() => {
+                    const normalized = normalizePhone(emergencyContact);
+                    setEmergencyContact(normalized);
+                    // Boşsa sessiz kalır; "boş bırakılamaz" gönderimde çıkar
+                    setFieldErrors((p) => ({
+                      ...p,
+                      emergencyContact: validatePhoneFormat(normalized),
+                    }));
+                  }}
+                />
+              </View>
+            </View>
+
+            {divider}
+
+            {/* ── Aksiyon satırı ─────────────────────────────── */}
+            <View style={styles.section}>
+              <View style={[styles.formFooter, stackFields && styles.formFooterStacked]}>
+                <View style={styles.footerSummary}>
+                  <ThemedText style={[styles.footerSummaryLabel, { color: colors.textMuted }]}>
+                    Talep özeti
+                  </ThemedText>
+                  <ThemedText style={[styles.footerSummaryValue, { color: colors.text }]}>
+                    {leaveTypeEmoji(selectedType)} {selectedType} · {netDays} gün
+                  </ThemedText>
+                </View>
+
+                {/* Dar ekranda özet üste geçer ama butonlar yan yana kalır */}
+                <View style={styles.footerActions}>
+                  <View style={stackFields ? styles.footerButtonFlex : styles.footerButton}>
+                    <Button label="Formu Temizle" onPress={resetForm} variant="ghost" />
+                  </View>
+                  <View style={stackFields ? styles.footerButtonFlex : styles.footerButton}>
+                    <Button label="Talebi Gönder" onPress={handleSubmit} />
+                  </View>
+                </View>
+              </View>
+            </View>
+          </Card>
+        </ScrollView>
+      ) : (
+        <FlatList
+          data={myRequests}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item, index }) => <MyRequestCard item={item} index={index} />}
+          style={styles.flex}
+          contentContainerStyle={styles.listContent}
+          ListEmptyComponent={
+            <EmptyState
+              icon="calendar"
+              title="Henüz talebin yok"
+              description="Oluşturduğun izin talepleri ve durumları burada listelenir."
+            />
+          }
         />
-        <CharCounter current={emergencyContact.length} max={LIMITS.emergencyContact} color={colors.textFaint} />
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzinde Bulunacağınız Adres</ThemedText>
-        <TextInput
-          style={[
-            styles.textArea,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="İzin süresince bulunacağınız adres"
-          placeholderTextColor={colors.textFaint}
-          multiline
-          value={leaveAddress}
-          onChangeText={setLeaveAddress}
-          maxLength={LIMITS.leaveAddress}
-        />
-        <CharCounter current={leaveAddress.length} max={LIMITS.leaveAddress} color={colors.textFaint} />
-
-        {error !== '' && (
-          <ThemedText style={[styles.error, { color: colors.danger }]}>{error}</ThemedText>
-        )}
-
-        <Button label="Talebi Gönder" onPress={handleSubmit} />
-      </Card>
+      )}
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
+  flex: { flex: 1 },
 
-  error: {
-    fontSize: 13,
-    marginTop: Space.sm,
+  /* ── Sabit başlık ───────────────────────────────────────── */
+  headerWrap: {
+    width: '100%',
+    maxWidth: 820,
+    alignSelf: 'center',
+    paddingHorizontal: Space.xl,
+    paddingTop: Space.xl,
+    paddingBottom: Space.sm,
+    gap: Space.md,
+  },
+  titleBlock: {
+    gap: Space.xs,
+  },
+  pageSubtitle: {
+    fontSize: 14,
   },
 
-  pageTitle: {
-    marginTop: Space.sm,
-    marginBottom: Space.md,
+  /* ── Form ───────────────────────────────────────────────── */
+  formContent: {
+    width: '100%',
+    maxWidth: 820,
+    alignSelf: 'center',
+    paddingHorizontal: Space.xl,
+    paddingTop: Space.xs,
+    paddingBottom: Space.xl,
+  },
+  section: {
+    gap: Space.sm,
+  },
+  // Kartın iki yakasına uzanan ayıraç (kart dolgusunu negatifle telafi eder)
+  divider: {
+    height: 1,
+    marginHorizontal: -Space.xl,
+    marginVertical: Space.sm,
   },
   label: {
     fontSize: 13,
+    fontWeight: '600',
     marginBottom: Space.xs,
-    marginTop: Space.sm,
   },
+  fieldRow: {
+    flexDirection: 'row',
+    gap: Space.md,
+    alignItems: 'flex-start',
+  },
+  fieldRowStacked: {
+    flexDirection: 'column',
+    gap: Space.sm,
+  },
+  // flex:1 (RN'de flexBasis:0) iki kolonu içerikten bağımsız eşit böler
+  field: {
+    flex: 1,
+    minWidth: 0,
+  },
+  textArea: {
+    minHeight: 72,
+    textAlignVertical: 'top',
+  },
+
+  /* ── İzin türü çipleri ──────────────────────────────────── */
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     gap: Space.sm,
   },
   chip: {
+    flex: 1,
+    minWidth: 140,
+    alignItems: 'center',
     borderWidth: 1,
     borderRadius: Radius.pill,
-    paddingHorizontal: Space.lg,
+    paddingHorizontal: Space.md,
     paddingVertical: Space.sm,
   },
-  dateRow: {
+  chipText: {
+    fontSize: 14,
+  },
+
+  /* ── Net gün satırı ─────────────────────────────────────── */
+  netDaysRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+  },
+  netDaysText: {
+    flex: 1,
+    fontSize: 13,
+  },
+  dayPill: {
+    paddingHorizontal: Space.md,
+    paddingVertical: 4,
+    borderRadius: Radius.pill,
+  },
+  dayPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+  },
+
+  /* ── Kart içi aksiyon satırı ────────────────────────────── */
+  formFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.lg,
+  },
+  formFooterStacked: {
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: Space.md,
+  },
+  footerSummary: {
+    flex: 1,
+    gap: 2,
+  },
+  footerSummaryLabel: {
+    fontSize: 11,
+  },
+  footerSummaryValue: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  footerActions: {
     flexDirection: 'row',
     gap: Space.md,
   },
-  dateCol: {
+  footerButton: {
+    width: 168,
+  },
+  footerButtonFlex: {
     flex: 1,
   },
-  netDaysBox: {
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.lg,
-    paddingVertical: Space.md,
-    marginTop: Space.md,
-  },
-  netDaysText: {
-    fontSize: 13,
-    fontWeight: '600',
-    textAlign: 'center',
-  },
-  input: {
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.lg,
-    paddingVertical: 14,
-    fontSize: 16,
-  },
-  textArea: {
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.lg,
-    paddingVertical: 14,
-    fontSize: 16,
-    minHeight: 90,
-    textAlignVertical: 'top',
-  },
 
-  /* ── Karakter sayacı ────────────────────────────────────── */
-  charCounter: {
+  /* ── Taleplerim listesi ─────────────────────────────────── */
+  listContent: {
+    width: '100%',
+    maxWidth: 820,
+    alignSelf: 'center',
+    paddingHorizontal: Space.xl,
+    paddingTop: Space.xs,
+    paddingBottom: Space.xxl,
+    gap: Space.md,
+  },
+  myCard: {
+    borderRadius: Radius.lg,
+    borderWidth: 1,
+    padding: Space.lg,
+    gap: Space.sm,
+    overflow: 'hidden',
+  },
+  statusStripe: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 4,
+  },
+  myCardHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    flexWrap: 'wrap',
+    gap: Space.sm,
+  },
+  typeBadge: {
+    paddingHorizontal: Space.md,
+    paddingVertical: 5,
+    borderRadius: Radius.pill,
+  },
+  typeBadgeText: {
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  statusBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Space.md,
+    paddingVertical: 5,
+    borderRadius: Radius.pill,
+  },
+  statusBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  myCardDates: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+  },
+  myCardDateText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  myCardDescription: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  rejectionBox: {
+    borderRadius: Radius.sm,
+    paddingHorizontal: Space.md,
+    paddingVertical: Space.sm,
+    gap: 2,
+  },
+  rejectionLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  rejectionText: {
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  processedAt: {
     fontSize: 11,
-    textAlign: 'right',
-    marginTop: 2,
   },
 });

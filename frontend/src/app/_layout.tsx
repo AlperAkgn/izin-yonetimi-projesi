@@ -1,8 +1,10 @@
 import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
 import { Redirect, Stack } from 'expo-router';
-import { useColorScheme } from 'react-native';
+
+import { useColorScheme } from '@/hooks/use-color-scheme';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
+import { ToastHost } from '@/components/ui/toast-host';
 import { useAuthStore } from '@/store/authStore';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
@@ -17,6 +19,7 @@ export default function RootLayout() {
         {!user && <Redirect href="/login" />}
         {user?.isFirstLogin && <Redirect href="/change-password" />}
         <Stack screenOptions={{ headerShown: false }} />
+        <ToastHost />
       </ThemeProvider>
     </GestureHandlerRootView>
   );
