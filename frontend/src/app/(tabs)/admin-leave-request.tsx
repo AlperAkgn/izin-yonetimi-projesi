@@ -18,6 +18,16 @@ const LEAVE_TYPES: LeaveType[] = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'];
 const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// Karakter limitleri
+const LIMITS = {
+  firstName: 30,
+  lastName: 30,
+  branch: 40,
+  phone: 15,
+  email: 60,
+  leaveAddress: 200,
+} as const;
+
 function isValidPhone(phone: string) {
   const cleaned = phone.replace(/[\s()-]/g, '');
   return PHONE_REGEX.test(cleaned);
@@ -37,6 +47,15 @@ function countNetWeekdays(start: Date, end: Date) {
     cursor.setDate(cursor.getDate() + 1);
   }
   return count;
+}
+
+/** Karakter sayacı bileşeni */
+function CharCounter({ current, max, color }: { current: number; max: number; color: string }) {
+  return (
+    <ThemedText style={[styles.charCounter, { color }]}>
+      {current}/{max}
+    </ThemedText>
+  );
 }
 
 export default function AdminLeaveRequestScreen() {
@@ -162,154 +181,176 @@ export default function AdminLeaveRequestScreen() {
     );
   };
 
+  const inputStyle = [
+    styles.input,
+    { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+  ];
+
   return (
-    <Screen>
+    <Screen wide>
       <ThemedText type="title" style={styles.pageTitle}>
         Çalışan İzin Yaz
       </ThemedText>
 
-      {/* Çalışan Bilgileri */}
-      <Card>
-        <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>
-          Çalışan Bilgileri
-        </ThemedText>
+      {/* ── İki Kolonlu Ana Layout ─────────────────────────────── */}
+      <View style={styles.gridRow}>
+        {/* ── Sol Kolon: Çalışan Bilgileri ─────────────────────── */}
+        <View style={styles.gridCol}>
+          <Card>
+            <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>
+              Çalışan Bilgileri
+            </ThemedText>
 
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İsim</ThemedText>
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="Çalışanın adı"
-          placeholderTextColor={colors.textFaint}
-          value={firstName}
-          onChangeText={setFirstName}
-        />
+            {/* İsim - Soyisim yan yana */}
+            <View style={styles.inlineRow}>
+              <View style={styles.inlineCol}>
+                <ThemedText style={[styles.label, { color: colors.textMuted }]}>İsim</ThemedText>
+                <TextInput
+                  style={inputStyle}
+                  placeholder="Örn: Ahmet"
+                  placeholderTextColor={colors.textFaint}
+                  value={firstName}
+                  onChangeText={setFirstName}
+                  maxLength={LIMITS.firstName}
+                />
+                <CharCounter current={firstName.length} max={LIMITS.firstName} color={colors.textFaint} />
+              </View>
+              <View style={styles.inlineCol}>
+                <ThemedText style={[styles.label, { color: colors.textMuted }]}>Soyisim</ThemedText>
+                <TextInput
+                  style={inputStyle}
+                  placeholder="Örn: Kaya"
+                  placeholderTextColor={colors.textFaint}
+                  value={lastName}
+                  onChangeText={setLastName}
+                  maxLength={LIMITS.lastName}
+                />
+                <CharCounter current={lastName.length} max={LIMITS.lastName} color={colors.textFaint} />
+              </View>
+            </View>
 
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Soyisim</ThemedText>
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="Çalışanın soyadı"
-          placeholderTextColor={colors.textFaint}
-          value={lastName}
-          onChangeText={setLastName}
-        />
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Şube</ThemedText>
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="Şube adı"
-          placeholderTextColor={colors.textFaint}
-          value={branch}
-          onChangeText={setBranch}
-        />
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>Telefon Numarası</ThemedText>
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="05XX XXX XX XX"
-          placeholderTextColor={colors.textFaint}
-          keyboardType="phone-pad"
-          value={phone}
-          onChangeText={setPhone}
-        />
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>E-posta Adresi</ThemedText>
-        <TextInput
-          style={[
-            styles.input,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="ornek@firma.com"
-          placeholderTextColor={colors.textFaint}
-          keyboardType="email-address"
-          autoCapitalize="none"
-          value={email}
-          onChangeText={setEmail}
-        />
-      </Card>
-
-      {/* İzin Bilgileri */}
-      <Card>
-        <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>
-          İzin Bilgileri
-        </ThemedText>
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzin kategorisi</ThemedText>
-        <View style={styles.chipRow}>
-          {LEAVE_TYPES.map((type) => {
-            const active = selectedType === type;
-            return (
-              <Pressable
-                key={type}
-                onPress={() => setSelectedType(type)}
-                style={[
-                  styles.chip,
-                  {
-                    backgroundColor: active ? colors.primary : 'transparent',
-                    borderColor: active ? colors.primary : colors.border,
-                  },
-                ]}>
-                <ThemedText
-                  style={{ color: active ? '#fff' : colors.text, fontWeight: active ? '600' : '400' }}>
-                  {type}
-                </ThemedText>
-              </Pressable>
-            );
-          })}
-        </View>
-
-        <View style={styles.dateRow}>
-          <View style={styles.dateCol}>
-            <ThemedText style={[styles.label, { color: colors.textMuted }]}>Başlangıç</ThemedText>
-            <DateField
-              value={startDate}
-              minimumDate={new Date()}
-              onChange={setStartDate}
-              borderColor={colors.border}
+            {/* Şube */}
+            <ThemedText style={[styles.label, { color: colors.textMuted }]}>Şube</ThemedText>
+            <TextInput
+              style={inputStyle}
+              placeholder="Şube adı"
+              placeholderTextColor={colors.textFaint}
+              value={branch}
+              onChangeText={setBranch}
+              maxLength={LIMITS.branch}
             />
-          </View>
-          <View style={styles.dateCol}>
-            <ThemedText style={[styles.label, { color: colors.textMuted }]}>Bitiş</ThemedText>
-            <DateField
-              value={endDate}
-              minimumDate={startDate}
-              onChange={setEndDate}
-              borderColor={colors.border}
+            <CharCounter current={branch.length} max={LIMITS.branch} color={colors.textFaint} />
+
+            {/* Telefon - E-posta yan yana */}
+            <View style={styles.inlineRow}>
+              <View style={styles.inlineCol}>
+                <ThemedText style={[styles.label, { color: colors.textMuted }]}>Telefon Numarası</ThemedText>
+                <TextInput
+                  style={inputStyle}
+                  placeholder="Örn: 05XX XXX XX XX"
+                  placeholderTextColor={colors.textFaint}
+                  keyboardType="phone-pad"
+                  value={phone}
+                  onChangeText={setPhone}
+                  maxLength={LIMITS.phone}
+                />
+                <CharCounter current={phone.length} max={LIMITS.phone} color={colors.textFaint} />
+              </View>
+              <View style={styles.inlineCol}>
+                <ThemedText style={[styles.label, { color: colors.textMuted }]}>E-posta Adresi</ThemedText>
+                <TextInput
+                  style={inputStyle}
+                  placeholder="Örn: ahmet.kaya@sirket.com"
+                  placeholderTextColor={colors.textFaint}
+                  keyboardType="email-address"
+                  autoCapitalize="none"
+                  value={email}
+                  onChangeText={setEmail}
+                  maxLength={LIMITS.email}
+                />
+                <CharCounter current={email.length} max={LIMITS.email} color={colors.textFaint} />
+              </View>
+            </View>
+          </Card>
+        </View>
+
+        {/* ── Sağ Kolon: İzin Bilgileri ────────────────────────── */}
+        <View style={styles.gridCol}>
+          <Card>
+            <ThemedText style={[styles.sectionTitle, { color: colors.text }]}>
+              İzin Bilgileri
+            </ThemedText>
+
+            <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzin kategorisi</ThemedText>
+            <View style={styles.chipRow}>
+              {LEAVE_TYPES.map((type) => {
+                const active = selectedType === type;
+                return (
+                  <Pressable
+                    key={type}
+                    onPress={() => setSelectedType(type)}
+                    style={[
+                      styles.chip,
+                      {
+                        backgroundColor: active ? colors.primary : 'transparent',
+                        borderColor: active ? colors.primary : colors.border,
+                      },
+                    ]}>
+                    <ThemedText
+                      style={{ color: active ? '#fff' : colors.text, fontWeight: active ? '600' : '400' }}>
+                      {type}
+                    </ThemedText>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            <View style={styles.dateRow}>
+              <View style={styles.dateCol}>
+                <ThemedText style={[styles.label, { color: colors.textMuted }]}>Başlangıç</ThemedText>
+                <DateField
+                  value={startDate}
+                  minimumDate={new Date()}
+                  onChange={setStartDate}
+                  borderColor={colors.border}
+                />
+              </View>
+              <View style={styles.dateCol}>
+                <ThemedText style={[styles.label, { color: colors.textMuted }]}>Bitiş</ThemedText>
+                <DateField
+                  value={endDate}
+                  minimumDate={startDate}
+                  onChange={setEndDate}
+                  borderColor={colors.border}
+                />
+              </View>
+            </View>
+
+            <View style={[styles.netDaysBox, { backgroundColor: colors.primarySoft }]}>
+              <ThemedText style={[styles.netDaysText, { color: colors.primary }]}>
+                Hafta sonları hariç toplam {netDays} gün
+              </ThemedText>
+            </View>
+
+            <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzinde Bulunacağı Adres</ThemedText>
+            <TextInput
+              style={[
+                styles.textArea,
+                { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+              ]}
+              placeholder="İzin süresince bulunacağı adres"
+              placeholderTextColor={colors.textFaint}
+              multiline
+              value={leaveAddress}
+              onChangeText={setLeaveAddress}
+              maxLength={LIMITS.leaveAddress}
             />
-          </View>
+            <CharCounter current={leaveAddress.length} max={LIMITS.leaveAddress} color={colors.textFaint} />
+          </Card>
         </View>
+      </View>
 
-        <View style={[styles.netDaysBox, { backgroundColor: colors.primarySoft }]}>
-          <ThemedText style={[styles.netDaysText, { color: colors.primary }]}>
-            Hafta sonları hariç toplam {netDays} gün
-          </ThemedText>
-        </View>
-
-        <ThemedText style={[styles.label, { color: colors.textMuted }]}>İzinde Bulunacağı Adres</ThemedText>
-        <TextInput
-          style={[
-            styles.textArea,
-            { color: colors.text, backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-          ]}
-          placeholder="İzin süresince bulunacağı adres"
-          placeholderTextColor={colors.textFaint}
-          multiline
-          value={leaveAddress}
-          onChangeText={setLeaveAddress}
-        />
-      </Card>
-
-      {/* Hata mesajı ve gönder butonu */}
+      {/* ── Hata mesajı ve gönder butonu — tam genişlik ─────────── */}
       <Card>
         {error !== '' && (
           <ThemedText style={[styles.error, { color: colors.danger }]}>{error}</ThemedText>
@@ -341,6 +382,32 @@ const styles = StyleSheet.create({
     marginBottom: Space.xs,
     marginTop: Space.sm,
   },
+
+  /* ── Grid: 2 kolonlu yatay düzen ────────────────────────── */
+  gridRow: {
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  gridCol: {
+    flex: 1,
+  },
+
+  /* ── Satır içi: 2'li yan yana input grupları ────────────── */
+  inlineRow: {
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  inlineCol: {
+    flex: 1,
+  },
+
+  /* ── Karakter sayacı ────────────────────────────────────── */
+  charCounter: {
+    fontSize: 11,
+    textAlign: 'right',
+    marginTop: 2,
+  },
+
   chipRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',

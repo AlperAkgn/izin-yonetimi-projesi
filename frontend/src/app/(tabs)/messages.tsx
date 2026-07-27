@@ -1,5 +1,6 @@
 import { router } from 'expo-router';
 import { FlatList, Pressable, StyleSheet, View } from 'react-native';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Screen } from '@/components/ui/screen';
@@ -23,39 +24,49 @@ function Avatar({ name }: { name: string }) {
   );
 }
 
-function ConversationRow({ item, isLast }: { item: Conversation; isLast: boolean }) {
+function ConversationRow({
+  item,
+  isLast,
+  index,
+}: {
+  item: Conversation;
+  isLast: boolean;
+  index: number;
+}) {
   const { colors } = useDesign();
   return (
-    <Pressable
-      onPress={() => router.push(`/chat/${item.id}`)}
-      style={({ pressed }) => [
-        styles.row,
-        {
-          backgroundColor: pressed ? colors.surfaceRaised : 'transparent',
-          borderBottomColor: colors.border,
-          borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
-        },
-      ]}>
-      <Avatar name={item.name} />
-      <View style={styles.rowBody}>
-        <View style={styles.rowTop}>
-          <ThemedText style={styles.rowName} numberOfLines={1}>
-            {item.name}
-          </ThemedText>
-          <ThemedText style={[styles.rowTime, { color: colors.textFaint }]}>{item.lastAt}</ThemedText>
+    <Animated.View entering={FadeInDown.delay(index * 40).duration(280).springify().damping(18)}>
+      <Pressable
+        onPress={() => router.push(`/chat/${item.id}`)}
+        style={({ pressed }) => [
+          styles.row,
+          {
+            backgroundColor: pressed ? colors.surfaceRaised : 'transparent',
+            borderBottomColor: colors.border,
+            borderBottomWidth: isLast ? 0 : StyleSheet.hairlineWidth,
+          },
+        ]}>
+        <Avatar name={item.name} />
+        <View style={styles.rowBody}>
+          <View style={styles.rowTop}>
+            <ThemedText style={styles.rowName} numberOfLines={1}>
+              {item.name}
+            </ThemedText>
+            <ThemedText style={[styles.rowTime, { color: colors.textFaint }]}>{item.lastAt}</ThemedText>
+          </View>
+          <View style={styles.rowBottom}>
+            <ThemedText style={[styles.rowPreview, { color: colors.textMuted }]} numberOfLines={1}>
+              {item.lastMessage}
+            </ThemedText>
+            {item.unread > 0 && (
+              <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                <ThemedText style={styles.badgeText}>{item.unread}</ThemedText>
+              </View>
+            )}
+          </View>
         </View>
-        <View style={styles.rowBottom}>
-          <ThemedText style={[styles.rowPreview, { color: colors.textMuted }]} numberOfLines={1}>
-            {item.lastMessage}
-          </ThemedText>
-          {item.unread > 0 && (
-            <View style={[styles.badge, { backgroundColor: colors.primary }]}>
-              <ThemedText style={styles.badgeText}>{item.unread}</ThemedText>
-            </View>
-          )}
-        </View>
-      </View>
-    </Pressable>
+      </Pressable>
+    </Animated.View>
   );
 }
 
@@ -68,7 +79,7 @@ export default function MessagesScreen() {
         data={conversations}
         keyExtractor={(c) => c.id}
         renderItem={({ item, index }) => (
-          <ConversationRow item={item} isLast={index === conversations.length - 1} />
+          <ConversationRow item={item} isLast={index === conversations.length - 1} index={index} />
         )}
         contentContainerStyle={styles.list}
       />
@@ -91,7 +102,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  list: { paddingBottom: Space.xl },
+  list: { padding: Space.xl, width: '100%', maxWidth: 480, alignSelf: 'center' },
   row: {
     flexDirection: 'row',
     alignItems: 'center',

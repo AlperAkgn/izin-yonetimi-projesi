@@ -8,12 +8,21 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import Animated, {
+  Easing,
+  FadeInDown,
+  interpolateColor,
+  useAnimatedStyle,
+  useSharedValue,
+  withTiming,
+} from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Button } from '@/components/ui/button';
 import { Screen } from '@/components/ui/screen';
 import { Palette, Radius, Shadow, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
+import { useAuthStore } from '@/store/authStore';
 import {
   filterPendingRequests,
   filterProcessedRequests,
@@ -78,6 +87,34 @@ export default function LeaveApprovalScreen() {
   const { colors } = useDesign();
 
   const [activeTab, setActiveTab] = useState<Tab>('pending');
+  const [tabRowWidth, setTabRowWidth] = useState(0);
+  // tabRow: borderWidth 1 + padding 3 her iki yanda da var; gösterge bu
+  // içerik kutusunun tam yarısı olmalı, yoksa kenardan taşar.
+  const indicatorWidth = tabRowWidth > 0 ? (tabRowWidth - 2 * 1 - 2 * 3) / 2 : 0;
+  const tabProgress = useSharedValue(0);
+
+  const selectTab = (tab: Tab) => {
+    setActiveTab(tab);
+    tabProgress.value = withTiming(tab === 'pending' ? 0 : 1, {
+      duration: 260,
+      easing: Easing.out(Easing.cubic),
+    });
+  };
+
+  const indicatorStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: tabProgress.value * indicatorWidth }],
+  }));
+  const pendingLabelStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(tabProgress.value, [0, 1], ['#ffffff', colors.textMuted]),
+  }));
+  const historyLabelStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(tabProgress.value, [0, 1], [colors.textMuted, '#ffffff']),
+  }));
+
+  // 🔒 Auth store'dan login olan kullanıcı bilgisi
+  const authUser = useAuthStore((s) => s.user);
+  const userRole = authUser?.role ?? 'ADMIN';
+  const userBranch = authUser?.branchName ?? null;
 
   // Store'dan oku
   const allRequests = useLeaveRequestsStore((s) => s.requests);
@@ -86,9 +123,9 @@ export default function LeaveApprovalScreen() {
   const cancelRequest = useLeaveRequestsStore((s) => s.cancelRequest);
   const updateRequest = useLeaveRequestsStore((s) => s.updateRequest);
 
-  // Türetilmiş listeler — tek kaynak (store) üzerinden filtrelenir
-  const pendingList = filterPendingRequests(allRequests);
-  const processedList = filterProcessedRequests(allRequests);
+  // Türetilmiş listeler — tek kaynak (store) üzerinden ROL BAZLI filtrelenir
+  const pendingList = filterPendingRequests(allRequests, userRole, userBranch);
+  const processedList = filterProcessedRequests(allRequests, userRole, userBranch);
 
   // Reject modal state
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
@@ -196,8 +233,9 @@ export default function LeaveApprovalScreen() {
   };
 
   // ── Card Renderers ─────────────────────────────────────────────
-  const renderPendingCard = ({ item }: { item: LeaveRequest }) => (
-    <View
+  const renderPendingCard = ({ item, index }: { item: LeaveRequest; index: number }) => (
+    <Animated.View
+      entering={FadeInDown.delay(index * 50).duration(280).springify().damping(18)}
       style={[
         styles.card,
         {
@@ -280,15 +318,16 @@ export default function LeaveApprovalScreen() {
           <ThemedText style={styles.actionBtnText}>✕ Reddet</ThemedText>
         </Pressable>
       </View>
-    </View>
+    </Animated.View>
   );
 
-  const renderProcessedCard = ({ item }: { item: LeaveRequest }) => {
+  const renderProcessedCard = ({ item, index }: { item: LeaveRequest; index: number }) => {
     const isEmergency = item.status === 'AUTO_APPROVED';
     const isAdminCreated = item.createdByAdmin === true;
 
     return (
-      <View
+      <Animated.View
+        entering={FadeInDown.delay(index * 50).duration(280).springify().damping(18)}
         style={[
           styles.card,
           {
@@ -373,7 +412,7 @@ export default function LeaveApprovalScreen() {
             </ThemedText>
           </View>
         )}
-      </View>
+      </Animated.View>
     );
   };
 
@@ -381,55 +420,46 @@ export default function LeaveApprovalScreen() {
 
   return (
     <Screen scroll={false}>
-      <ThemedText type="title" style={styles.pageTitle}>
-        İzin Onay Yönetimi
-      </ThemedText>
+      <View style={styles.headerWrap}>
+        <ThemedText type="title" style={styles.pageTitle}>
+          İzin Onay Yönetimi
+        </ThemedText>
 
-      {/* Tab Buttons */}
-      <View style={[styles.tabRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
-        <Pressable
-          onPress={() => setActiveTab('pending')}
-          style={[
-            styles.tabBtn,
-            {
-              backgroundColor: activeTab === 'pending' ? colors.primary : 'transparent',
-            },
-          ]}>
-          <ThemedText
-            style={[
-              styles.tabBtnText,
-              { color: activeTab === 'pending' ? '#fff' : colors.textMuted },
-            ]}>
-            Bekleyen Talepler
-          </ThemedText>
-          {pendingList.length > 0 && (
-            <View style={[styles.badge, { backgroundColor: activeTab === 'pending' ? '#fff' : colors.primary }]}>
-              <ThemedText
-                style={[
-                  styles.badgeText,
-                  { color: activeTab === 'pending' ? colors.primary : '#fff' },
-                ]}>
-                {pendingList.length}
-              </ThemedText>
-            </View>
+        {/* Tab Buttons */}
+        <View
+          style={[styles.tabRow, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}
+          onLayout={(e) => setTabRowWidth(e.nativeEvent.layout.width)}>
+          {tabRowWidth > 0 && (
+            <Animated.View
+              style={[
+                styles.tabIndicator,
+                { backgroundColor: colors.primary, width: indicatorWidth },
+                indicatorStyle,
+              ]}
+            />
           )}
-        </Pressable>
-        <Pressable
-          onPress={() => setActiveTab('history')}
-          style={[
-            styles.tabBtn,
-            {
-              backgroundColor: activeTab === 'history' ? colors.primary : 'transparent',
-            },
-          ]}>
-          <ThemedText
-            style={[
-              styles.tabBtnText,
-              { color: activeTab === 'history' ? '#fff' : colors.textMuted },
-            ]}>
-            İşlem Görenler
-          </ThemedText>
-        </Pressable>
+          <Pressable onPress={() => selectTab('pending')} style={styles.tabBtn}>
+            <Animated.Text style={[styles.tabBtnText, pendingLabelStyle]}>
+              Bekleyen Talepler
+            </Animated.Text>
+            {pendingList.length > 0 && (
+              <View style={[styles.badge, { backgroundColor: activeTab === 'pending' ? '#fff' : colors.primary }]}>
+                <ThemedText
+                  style={[
+                    styles.badgeText,
+                    { color: activeTab === 'pending' ? colors.primary : '#fff' },
+                  ]}>
+                  {pendingList.length}
+                </ThemedText>
+              </View>
+            )}
+          </Pressable>
+          <Pressable onPress={() => selectTab('history')} style={styles.tabBtn}>
+            <Animated.Text style={[styles.tabBtnText, historyLabelStyle]}>
+              İşlem Görenler
+            </Animated.Text>
+          </Pressable>
+        </View>
       </View>
 
       {/* List */}
@@ -437,8 +467,9 @@ export default function LeaveApprovalScreen() {
         data={currentList}
         keyExtractor={(item) => item.id}
         renderItem={activeTab === 'pending' ? renderPendingCard : renderProcessedCard}
+        style={styles.flatList}
         contentContainerStyle={styles.listContent}
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={true}
         ListEmptyComponent={
           <View style={styles.emptyBox}>
             <ThemedText style={[styles.emptyText, { color: colors.textFaint }]}>
@@ -608,6 +639,18 @@ export default function LeaveApprovalScreen() {
 
 // ─── Styles ───────────────────────────────────────────────────────
 const styles = StyleSheet.create({
+  // Screen artık scroll=false yolunda genişlik sınırlamıyor (FlatList'in kendi
+  // kaydırma çubuğu ekranın en sağına yapışsın diye) — bu yüzden kaydırmayan
+  // başlık/tab alanını burada kendimiz ortalayıp genişlik sınırlıyoruz.
+  headerWrap: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    paddingHorizontal: Space.xl,
+    paddingTop: Space.xl,
+    paddingBottom: Space.md,
+    gap: Space.md,
+  },
   pageTitle: {
     marginTop: Space.sm,
     marginBottom: Space.md,
@@ -620,6 +663,13 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     padding: 3,
     marginBottom: Space.md,
+  },
+  tabIndicator: {
+    position: 'absolute',
+    top: 3,
+    bottom: 3,
+    left: 3,
+    borderRadius: Radius.sm,
   },
   tabBtn: {
     flex: 1,
@@ -647,9 +697,19 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // List
+  // List — FlatList kalan alanı doldurur, tab'lar sticky kalır.
+  // contentContainerStyle'da maxWidth+alignSelf: FlatList'in kendisi tam
+  // genişlikte (kaydırma çubuğu sağda) kalırken, içindeki kartlar ortalanır.
+  flatList: {
+    flex: 1,
+  },
   listContent: {
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
+    paddingHorizontal: Space.xl,
     paddingBottom: Space.xxl,
+    paddingTop: Space.xs,
     gap: Space.md,
   },
 

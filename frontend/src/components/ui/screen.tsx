@@ -27,17 +27,16 @@ export function Screen({
     );
   }
 
-  // scroll=false: FlatList gibi kendi kaydırmasını yöneten içerikler için
-  return (
-    <View style={[styles.root, { backgroundColor: colors.bg }]}>
-      <View style={[styles.inner, styles.innerPadding, { maxWidth }]}>{children}</View>
-    </View>
-  );
+  // scroll=false: FlatList gibi kendi kaydırmasını yöneten içerikler için.
+  // Burada maxWidth ile saramıyoruz — FlatList'i sarmak onun kaydırma
+  // çubuğunu da o dar kutunun kenarına hapseder. Genişlik/dolgu sınırlamasını
+  // çağıran ekran kendi contentContainerStyle'ında uygular (Screen'in
+  // scroll=true yolundaki maxWidth mantığıyla aynı prensip).
+  return <View style={[styles.root, { backgroundColor: colors.bg }]}>{children}</View>;
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
   scrollContent: { flexGrow: 1, padding: Space.xl },
   inner: { width: '100%', alignSelf: 'center', gap: Space.md, flex: 1 },
-  innerPadding: { padding: Space.xl },
 });

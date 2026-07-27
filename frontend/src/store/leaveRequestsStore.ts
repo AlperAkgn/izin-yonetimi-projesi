@@ -80,14 +80,47 @@ const INITIAL_REQUESTS: LeaveRequest[] = [
 // ─── Filtreleme Yardımcıları (Business Rules) ─────────────────────
 // 🚨 KRİTİK KURAL: leaveType === 'Acil' olan kayıtlar status ne olursa olsun
 //    ASLA pending sekmesinde görünemez. Her zaman processed/history'ye düşer.
-export function filterPendingRequests(requests: LeaveRequest[]): LeaveRequest[] {
-  return requests.filter(
+//
+// 🔒 ROL BAZLI FİLTRELEME KURALLARI:
+//   - ADMIN  → tüm şubelerin taleplerini görür (şube filtresi uygulanmaz)
+//   - HR     → SADECE kendi şubesindeki (branchName eşleşen) talepleri görür
+
+/** Şube bazlı ön filtreleme — rol kurallarını uygular */
+function applyBranchFilter(
+  requests: LeaveRequest[],
+  userRole: 'HR' | 'ADMIN' | string,
+  userBranch: string | null,
+): LeaveRequest[] {
+  // Admin → tüm şubeleri görür, filtre yok
+  if (userRole === 'ADMIN') return requests;
+
+  // HR → sadece kendi şubesi
+  if (userRole === 'HR' && userBranch) {
+    return requests.filter((r) => r.branch === userBranch);
+  }
+
+  // Diğer roller veya şubesi tanımsız HR → boş liste (güvenlik)
+  return [];
+}
+
+export function filterPendingRequests(
+  requests: LeaveRequest[],
+  userRole: string = 'ADMIN',
+  userBranch: string | null = null,
+): LeaveRequest[] {
+  const scoped = applyBranchFilter(requests, userRole, userBranch);
+  return scoped.filter(
     (r) => r.status === 'PENDING' && r.leaveType !== 'Acil',
   );
 }
 
-export function filterProcessedRequests(requests: LeaveRequest[]): LeaveRequest[] {
-  return requests.filter(
+export function filterProcessedRequests(
+  requests: LeaveRequest[],
+  userRole: string = 'ADMIN',
+  userBranch: string | null = null,
+): LeaveRequest[] {
+  const scoped = applyBranchFilter(requests, userRole, userBranch);
+  return scoped.filter(
     (r) => r.status !== 'PENDING' || r.leaveType === 'Acil',
   );
 }

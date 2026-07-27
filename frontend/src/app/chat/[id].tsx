@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { BackButton } from '@/components/ui/back-button';
 import { Radius, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
 import { Attachment, MAX_FILE_BYTES, Message } from '@/services/messages';
@@ -126,6 +127,7 @@ export default function ChatScreen() {
           title: conversation?.name ?? 'Sohbet',
           headerStyle: { backgroundColor: colors.surface },
           headerTintColor: colors.text,
+          headerLeft: () => <BackButton />,
         }}
       />
 
