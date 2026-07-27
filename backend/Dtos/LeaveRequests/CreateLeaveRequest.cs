@@ -22,5 +22,9 @@ namespace LeaveManagementAPI.Models.LeaveRequests
 
         [MaxLength(200)]
         public string? EmergencyContact { get; set; }
+
+        [Required]
+        [MaxLength(500)]
+        public string LeaveAddress { get; set; } = string.Empty;
     }
 }

@@ -33,6 +33,10 @@ namespace LeaveManagementAPI.Entities
         public string? EmergencyContact { get; set; }
 
         [Required]
+        [MaxLength(500)]
+        public string LeaveAddress { get; set; } = string.Empty;
+
+        [Required]
         public LeaveStatus Status { get; set; } = LeaveStatus.PENDING;
 
         [Required]

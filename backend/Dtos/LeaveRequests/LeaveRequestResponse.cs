@@ -10,6 +10,7 @@ namespace LeaveManagementAPI.Models.LeaveRequests
         public DateTime EndDate { get; set; }
         public string? Description { get; set; }
         public string? EmergencyContact { get; set; }
+        public string LeaveAddress { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public int ChargedLeaveDays { get; set; }
         public string? RejectionReason { get; set; }

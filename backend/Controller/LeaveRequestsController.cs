@@ -99,6 +99,11 @@ namespace LeaveManagementAPI.Controller
                 return BadRequest(new { message = "Bitis tarihi baslangic tarihinden once olamaz." });
             }
 
+            if (string.IsNullOrWhiteSpace(request.LeaveAddress))
+            {
+                return BadRequest(new { message = "Izinde bulunulacak adres zorunludur." });
+            }
+
             var userWorkplace = await _context.UserWorkplaces
                 .SingleOrDefaultAsync(mapping => mapping.UserId == currentUser.Id && mapping.WorkplaceId == request.WorkplaceId, cancellationToken);
             if (userWorkplace is null)
@@ -149,6 +154,7 @@ namespace LeaveManagementAPI.Controller
                 EndDate = endDate,
                 Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
                 EmergencyContact = string.IsNullOrWhiteSpace(request.EmergencyContact) ? null : request.EmergencyContact.Trim(),
+                LeaveAddress = request.LeaveAddress.Trim(),
                 Status = rejectionReason is not null
                     ? LeaveStatus.REJECTED
                     : isEmergencyLeave ? LeaveStatus.APPROVED : LeaveStatus.PENDING,
@@ -213,6 +219,11 @@ namespace LeaveManagementAPI.Controller
                 return BadRequest(new { message = "Bitis tarihi baslangic tarihinden once olamaz." });
             }
 
+            if (string.IsNullOrWhiteSpace(request.LeaveAddress))
+            {
+                return BadRequest(new { message = "Izinde bulunulacak adres zorunludur." });
+            }
+
             var userWorkplace = await _context.UserWorkplaces.SingleOrDefaultAsync(
                 mapping => mapping.UserId == employee.Id && mapping.WorkplaceId == request.WorkplaceId,
                 cancellationToken);
@@ -257,6 +268,7 @@ namespace LeaveManagementAPI.Controller
                 EndDate = endDate,
                 Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
                 EmergencyContact = string.IsNullOrWhiteSpace(request.EmergencyContact) ? null : request.EmergencyContact.Trim(),
+                LeaveAddress = request.LeaveAddress.Trim(),
                 // Admin tarafindan kaydedilen izin, hak limiti uygunsa dogrudan onaylanir.
                 Status = rejectionReason is null ? LeaveStatus.APPROVED : LeaveStatus.REJECTED,
                 ChargedLeaveDays = rejectionReason is null ? chargeableDays : 0,
@@ -666,6 +678,7 @@ namespace LeaveManagementAPI.Controller
                 EndDate = leaveRequest.EndDate,
                 Description = leaveRequest.Description,
                 EmergencyContact = leaveRequest.EmergencyContact,
+                LeaveAddress = leaveRequest.LeaveAddress,
                 Status = leaveRequest.Status.ToString(),
                 ChargedLeaveDays = leaveRequest.ChargedLeaveDays,
                 RejectionReason = leaveRequest.RejectionReason

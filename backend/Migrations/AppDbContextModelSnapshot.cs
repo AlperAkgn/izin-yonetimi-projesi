@@ -49,6 +49,12 @@ namespace LeaveManagementAPI.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("emergencyContact");
 
+                    b.Property<string>("LeaveAddress")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("leaveAddress");
+
                     b.Property<string>("RejectionReason")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
