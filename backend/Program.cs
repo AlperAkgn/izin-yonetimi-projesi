@@ -25,6 +25,7 @@ builder.Services.AddHttpClient<IPublicHolidayService, PublicHolidayService>(clie
     client.Timeout = TimeSpan.FromSeconds(15);
 });
 builder.Services.AddScoped<ILeaveDayCalculator, LeaveDayCalculator>();
+builder.Services.AddHostedService<SoftDeletedWorkplacePurgeService>();
 
 // Controllers with JSON options
 builder.Services.AddControllers()
