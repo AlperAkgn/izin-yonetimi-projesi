@@ -89,10 +89,11 @@ namespace LeaveManagementAPI.Controller
             }
 
             if (string.IsNullOrWhiteSpace(request.Mail)
+                || string.IsNullOrWhiteSpace(request.Phone)
                 || string.IsNullOrWhiteSpace(request.Name)
                 || string.IsNullOrWhiteSpace(request.Surname))
             {
-                return BadRequest(new { message = "Mail, name ve surname alanlari bos olamaz." });
+                return BadRequest(new { message = "Mail, phone, name ve surname alanlari bos olamaz." });
             }
 
             if (!TryParseWorkplaceUserRole(request.Role, out var role))
@@ -115,6 +116,7 @@ namespace LeaveManagementAPI.Controller
             var user = new User
             {
                 Mail = normalizedMail,
+                Phone = request.Phone.Trim(),
                 Name = request.Name.Trim(),
                 Surname = request.Surname.Trim(),
                 Role = role,
@@ -192,6 +194,38 @@ namespace LeaveManagementAPI.Controller
             await _context.SaveChangesAsync(cancellationToken);
 
             return Ok(ToUserResponse(userWorkplace.User, userWorkplace.AnnualLeaveCount));
+        }
+
+        [HttpDelete("{id:long}/users/{userId:long}")]
+        public async Task<IActionResult> RemoveUser(long id, long userId, CancellationToken cancellationToken)
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            if (!await HasWorkplaceAccess(id, auth.AdminId))
+            {
+                return NotFound(new { message = "Is yeri bulunamadi." });
+            }
+
+            var userWorkplace = await _context.UserWorkplaces
+                .Include(mapping => mapping.User)
+                .SingleOrDefaultAsync(mapping => mapping.WorkplaceId == id && mapping.UserId == userId, cancellationToken);
+            if (userWorkplace is null)
+            {
+                return NotFound(new { message = "Kullanici bu is yerinde bulunamadi." });
+            }
+
+            if (userWorkplace.User.Role == UserRole.ADMIN)
+            {
+                return BadRequest(new { message = "Yonetici is yeri atamasi bu endpoint ile kaldirilamaz." });
+            }
+
+            _context.UserWorkplaces.Remove(userWorkplace);
+            await _context.SaveChangesAsync(cancellationToken);
+            return NoContent();
         }
 
 
@@ -485,6 +519,7 @@ namespace LeaveManagementAPI.Controller
             {
                 Id = user.Id,
                 Mail = user.Mail,
+                Phone = user.Phone,
                 Name = user.Name,
                 Surname = user.Surname,
                 Role = user.Role.ToString(),
@@ -498,6 +533,7 @@ namespace LeaveManagementAPI.Controller
             {
                 Id = user.Id,
                 Mail = user.Mail,
+                Phone = user.Phone,
                 Name = user.Name,
                 Surname = user.Surname,
                 Role = user.Role.ToString(),

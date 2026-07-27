@@ -33,10 +33,11 @@ namespace LeaveManagementAPI.Controller
         public async Task<ActionResult<UserResponse>> Create(CreateUserRequest request, CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(request.Mail)
+                || string.IsNullOrWhiteSpace(request.Phone)
                 || string.IsNullOrWhiteSpace(request.Name)
                 || string.IsNullOrWhiteSpace(request.Surname))
             {
-                return BadRequest(new { message = "Mail, name ve surname alanlari bos olamaz." });
+                return BadRequest(new { message = "Mail, phone, name ve surname alanlari bos olamaz." });
             }
 
             if (!TryParseAllowedRole(request.Role, out var role))
@@ -58,6 +59,7 @@ namespace LeaveManagementAPI.Controller
             var user = new User
             {
                 Mail = normalizedMail,
+                Phone = request.Phone.Trim(),
                 Name = request.Name.Trim(),
                 Surname = request.Surname.Trim(),
                 Role = role,
@@ -94,6 +96,35 @@ namespace LeaveManagementAPI.Controller
             }
 
             return Created($"/api/users/{user.Id}", ToResponse(user));
+        }
+
+        [HttpPatch("{id:long}/status")]
+        [Authorize(Roles = "ADMIN")]
+        public async Task<ActionResult<UserResponse>> UpdateStatus(
+            long id,
+            UpdateUserStatusRequest request,
+            CancellationToken cancellationToken)
+        {
+            var currentUserId = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+            if (!long.TryParse(currentUserId, out var adminId))
+            {
+                return Unauthorized(new { message = "Gecersiz token." });
+            }
+
+            if (id == adminId && !request.IsActive)
+            {
+                return BadRequest(new { message = "Kendi hesabinizi pasife alamazsiniz." });
+            }
+
+            var user = await _context.Users.SingleOrDefaultAsync(user => user.Id == id, cancellationToken);
+            if (user is null)
+            {
+                return NotFound(new { message = "Kullanici bulunamadi." });
+            }
+
+            user.IsActive = request.IsActive;
+            await _context.SaveChangesAsync(cancellationToken);
+            return Ok(ToResponse(user));
         }
 
         private static bool TryParseAllowedRole(string roleValue, out UserRole role)
@@ -158,6 +189,7 @@ namespace LeaveManagementAPI.Controller
             {
                 Id = user.Id,
                 Mail = user.Mail,
+                Phone = user.Phone,
                 Name = user.Name,
                 Surname = user.Surname,
                 Role = user.Role.ToString(),

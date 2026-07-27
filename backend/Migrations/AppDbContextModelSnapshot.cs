@@ -199,6 +199,12 @@ namespace LeaveManagementAPI.Migrations
                         .HasColumnType("character varying(512)")
                         .HasColumnName("password");
 
+                    b.Property<string>("Phone")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("phone");
+
                     b.Property<DateTime?>("TempPasswordUsedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("tempPasswordUsedAt");
