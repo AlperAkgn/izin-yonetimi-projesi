@@ -1,5 +1,8 @@
 import { useRef } from 'react';
 
+import { Radius } from '@/constants/design';
+import { useDesign } from '@/hooks/use-design';
+
 type Props = {
   value: Date;
   minimumDate?: Date;
@@ -13,6 +16,7 @@ function toInputValue(date: Date) {
 
 export function DateField({ value, minimumDate, onChange, borderColor }: Props) {
   const ref = useRef<HTMLInputElement>(null);
+  const { colors, isDark } = useDesign();
 
   return (
     <input
@@ -27,11 +31,18 @@ export function DateField({ value, minimumDate, onChange, borderColor }: Props) 
       }}
       style={{
         border: `1px solid ${borderColor}`,
-        borderRadius: 10,
-        padding: 12,
-        fontSize: 16,
+        borderRadius: Radius.md,
+        padding: '12px 16px',
+        fontSize: 15,
         fontFamily: 'inherit',
         cursor: 'pointer',
+        // Diğer input'larla aynı tema: aksi halde tarayıcı varsayılanı
+        // karanlık modda beyaz kutu bırakıyor. colorScheme takvim ikonunu da çevirir.
+        width: '100%',
+        boxSizing: 'border-box',
+        background: colors.surfaceRaised,
+        color: colors.text,
+        colorScheme: isDark ? 'dark' : 'light',
       }}
     />
   );

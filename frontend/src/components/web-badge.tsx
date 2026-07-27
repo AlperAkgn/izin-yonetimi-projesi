@@ -5,7 +5,7 @@ import { useColorScheme, StyleSheet } from 'react-native';
 import { ThemedText } from './themed-text';
 import { ThemedView } from './themed-view';
 
-import { Spacing } from '@/constants/theme';
+import { Space } from '@/constants/design';
 
 export function WebBadge() {
   const scheme = useColorScheme();
@@ -29,9 +29,9 @@ export function WebBadge() {
 
 const styles = StyleSheet.create({
   container: {
-    padding: Spacing.five,
+    padding: Space.xxl,
     alignItems: 'center',
-    gap: Spacing.two,
+    gap: Space.sm,
   },
   versionText: {
     textAlign: 'center',
