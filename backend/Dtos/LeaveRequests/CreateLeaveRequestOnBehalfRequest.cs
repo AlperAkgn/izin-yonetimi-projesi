@@ -3,8 +3,13 @@ using LeaveManagementAPI.Enums;
 
 namespace LeaveManagementAPI.Models.LeaveRequests
 {
-    public class CreateLeaveRequest
+    public class CreateLeaveRequestOnBehalfRequest
     {
+        [Required]
+        [EmailAddress]
+        [MaxLength(256)]
+        public string EmployeeMail { get; set; } = string.Empty;
+
         [Range(1, long.MaxValue)]
         public long WorkplaceId { get; set; }
 

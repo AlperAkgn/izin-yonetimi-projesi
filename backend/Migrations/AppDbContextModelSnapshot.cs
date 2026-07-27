@@ -49,6 +49,12 @@ namespace LeaveManagementAPI.Migrations
                         .HasColumnType("character varying(200)")
                         .HasColumnName("emergencyContact");
 
+                    b.Property<string>("LeaveAddress")
+                        .IsRequired()
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)")
+                        .HasColumnName("leaveAddress");
+
                     b.Property<string>("RejectionReason")
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)")
@@ -192,6 +198,12 @@ namespace LeaveManagementAPI.Migrations
                         .HasMaxLength(512)
                         .HasColumnType("character varying(512)")
                         .HasColumnName("password");
+
+                    b.Property<string>("Phone")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("character varying(20)")
+                        .HasColumnName("phone");
 
                     b.Property<DateTime?>("TempPasswordUsedAt")
                         .HasColumnType("timestamp with time zone")

@@ -20,6 +20,10 @@ namespace LeaveManagementAPI.Entities
         public string Mail { get; set; } = string.Empty;
 
         [Required]
+        [MaxLength(20)]
+        public string Phone { get; set; } = string.Empty;
+
+        [Required]
         [MaxLength(512)]
         public string Password { get; set; } = string.Empty;
 
