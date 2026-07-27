@@ -320,6 +320,36 @@ namespace LeaveManagementAPI.Controller
             return NoContent();
         }
 
+        [HttpPost("{id:long}/restore")]
+        public async Task<ActionResult<WorkplaceResponse>> Restore(long id, CancellationToken cancellationToken)
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            var workplace = await _context.Workplaces
+                .IgnoreQueryFilters()
+                .SingleOrDefaultAsync(workplace => workplace.Id == id
+                    && workplace.UserWorkplaces.Any(mapping => mapping.UserId == auth.AdminId), cancellationToken);
+            if (workplace is null)
+            {
+                return NotFound(new { message = "Silinmis is yeri bulunamadi." });
+            }
+
+            if (workplace.DeletedAt is null)
+            {
+                return BadRequest(new { message = "Is yeri silinmis durumda degil." });
+            }
+
+            workplace.DeletedAt = null;
+            workplace.IsActive = true;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return Ok(ToResponse(workplace));
+        }
+
         private static bool HasRequiredTextFields(params string[] values)
         {
             return values.All(value => !string.IsNullOrWhiteSpace(value));
