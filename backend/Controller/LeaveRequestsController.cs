@@ -176,6 +176,111 @@ namespace LeaveManagementAPI.Controller
             return Created($"/api/leave-requests/{leaveRequest.Id}", ToResponse(leaveRequest));
         }
 
+        // An administrator may create a leave record for an existing employee.
+        // The employee is identified by the unique e-mail address rather than by
+        // client-supplied personal details, so a request cannot be assigned to an
+        // arbitrary identity.
+        [HttpPost("on-behalf")]
+        [Authorize(Roles = "ADMIN")]
+        public async Task<ActionResult<LeaveRequestResponse>> CreateOnBehalf(
+            CreateLeaveRequestOnBehalfRequest request,
+            CancellationToken cancellationToken)
+        {
+            var admin = await GetCurrentUserAsync();
+            if (admin is null)
+            {
+                return Unauthorized(new { message = "Gecersiz token." });
+            }
+
+            if (string.IsNullOrWhiteSpace(request.EmployeeMail))
+            {
+                return BadRequest(new { message = "Calisan e-posta adresi zorunludur." });
+            }
+
+            var normalizedMail = request.EmployeeMail.Trim().ToLowerInvariant();
+            var employee = await _context.Users.SingleOrDefaultAsync(
+                user => user.Mail.ToLower() == normalizedMail && user.IsActive,
+                cancellationToken);
+            if (employee is null || employee.Role != UserRole.EMPLOYEE)
+            {
+                return NotFound(new { message = "Bu e-posta adresiyle aktif bir calisan bulunamadi." });
+            }
+
+            var startDate = NormalizeDate(request.StartDate);
+            var endDate = NormalizeDate(request.EndDate);
+            if (endDate < startDate)
+            {
+                return BadRequest(new { message = "Bitis tarihi baslangic tarihinden once olamaz." });
+            }
+
+            var userWorkplace = await _context.UserWorkplaces.SingleOrDefaultAsync(
+                mapping => mapping.UserId == employee.Id && mapping.WorkplaceId == request.WorkplaceId,
+                cancellationToken);
+            if (userWorkplace is null)
+            {
+                return BadRequest(new { message = "Calisan secilen is yerine atanmamis." });
+            }
+
+            var overlapsExistingRequest = await _context.LeaveRequests.AnyAsync(existingRequest =>
+                existingRequest.UserId == employee.Id
+                && existingRequest.WorkplaceId == request.WorkplaceId
+                && (existingRequest.Status == LeaveStatus.PENDING || existingRequest.Status == LeaveStatus.APPROVED)
+                && existingRequest.StartDate <= endDate
+                && existingRequest.EndDate >= startDate,
+                cancellationToken);
+            if (overlapsExistingRequest)
+            {
+                return Conflict(new { message = "Calisanin bu tarih araliginda bekleyen veya onaylanmis bir izin talebi var." });
+            }
+
+            var chargeableDaysByYear = await _leaveDayCalculator.CalculateChargeableDaysByYearAsync(
+                startDate, endDate, cancellationToken);
+            if (chargeableDaysByYear.Count == 0)
+            {
+                return BadRequest(new { message = "Secilen tarih araliginda izin hakkindan dusecek is gunu yok." });
+            }
+
+            var chargeableDays = chargeableDaysByYear.Values.Sum();
+            var isEmergencyLeave = request.LeaveType == LeaveType.EMERGENCY;
+            var rejectionReason = isEmergencyLeave
+                ? null
+                : await GetAnnualLeaveLimitExceededReasonAsync(
+                    employee.Id, request.WorkplaceId, userWorkplace.AnnualLeaveCount,
+                    startDate, endDate, null, cancellationToken);
+
+            var leaveRequest = new LeaveRequest
+            {
+                UserId = employee.Id,
+                WorkplaceId = request.WorkplaceId,
+                LeaveType = request.LeaveType,
+                StartDate = startDate,
+                EndDate = endDate,
+                Description = string.IsNullOrWhiteSpace(request.Description) ? null : request.Description.Trim(),
+                EmergencyContact = string.IsNullOrWhiteSpace(request.EmergencyContact) ? null : request.EmergencyContact.Trim(),
+                // Admin tarafindan kaydedilen izin, hak limiti uygunsa dogrudan onaylanir.
+                Status = rejectionReason is null ? LeaveStatus.APPROVED : LeaveStatus.REJECTED,
+                ChargedLeaveDays = rejectionReason is null ? chargeableDays : 0,
+                RejectionReason = rejectionReason
+            };
+
+            _context.LeaveRequests.Add(leaveRequest);
+            _context.LeaveRequestAudits.Add(new LeaveRequestAudit
+            {
+                LeaveRequest = leaveRequest,
+                ActionByUserId = admin.Id,
+                ActionType = rejectionReason is null ? AuditActionType.APPROVED : AuditActionType.REJECTED,
+                ActionAt = DateTime.UtcNow
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+
+            if (request.LeaveType == LeaveType.EMERGENCY && rejectionReason is null)
+            {
+                await NotifyEmergencyLeaveApprovedAsync(leaveRequest, employee, cancellationToken);
+            }
+
+            return Created($"/api/leave-requests/{leaveRequest.Id}", ToResponse(leaveRequest));
+        }
+
         [HttpPost("{id:long}/approve")]
         [Authorize(Roles = "ADMIN,HR")]
         public async Task<ActionResult<LeaveRequestResponse>> Approve(long id, CancellationToken cancellationToken)
