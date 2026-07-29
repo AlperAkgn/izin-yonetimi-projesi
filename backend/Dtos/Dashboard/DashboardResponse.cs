@@ -67,5 +67,6 @@ namespace LeaveManagementAPI.Models.Dashboard
     {
         public string Status { get; set; } = "NOT_AVAILABLE";
         public int? ActiveConnectionCount { get; set; }
+        public int? ActiveUserCount { get; set; }
     }
 }

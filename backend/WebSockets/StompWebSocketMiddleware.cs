@@ -15,7 +15,11 @@ namespace LeaveManagementAPI.WebSockets
         private const string UserQueueSuffix = "/queue/messages";
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-        public async Task InvokeAsync(HttpContext context, IMessageService messageService, IStompMessageBroker messageBroker)
+        public async Task InvokeAsync(
+            HttpContext context,
+            IMessageService messageService,
+            IStompMessageBroker messageBroker,
+            IRealtimePresenceService presenceService)
         {
             if (!context.Request.Path.Equals(WebSocketPath, StringComparison.OrdinalIgnoreCase))
             {
@@ -38,6 +42,7 @@ namespace LeaveManagementAPI.WebSockets
             }
 
             using var socket = await context.WebSockets.AcceptWebSocketAsync();
+            var connectionId = await presenceService.ConnectAsync(currentUserId, context.RequestAborted);
             try
             {
                 await ProcessFramesAsync(socket, currentUserId, messageService, messageBroker, context.RequestAborted);
@@ -49,6 +54,7 @@ namespace LeaveManagementAPI.WebSockets
             finally
             {
                 messageBroker.Unsubscribe(socket);
+                await presenceService.DisconnectAsync(connectionId, CancellationToken.None);
             }
         }
 

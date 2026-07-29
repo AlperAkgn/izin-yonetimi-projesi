@@ -141,6 +141,45 @@ namespace LeaveManagementAPI.Migrations
                     b.ToTable("Messages");
                 });
 
+            modelBuilder.Entity("LeaveManagementAPI.Entities.RealtimeConnection", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("ConnectionId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("connectionId");
+
+                    b.Property<DateTime>("ConnectedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("connectedAt");
+
+                    b.Property<DateTime?>("DisconnectedAt")
+                        .HasColumnType("timestamp with time zone")
+                        .HasColumnName("disconnectedAt");
+
+                    b.Property<long>("UserId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("userId");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ConnectionId")
+                        .IsUnique();
+
+                    b.HasIndex("DisconnectedAt", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("RealtimeConnections");
+                });
+
             modelBuilder.Entity("LeaveManagementAPI.Entities.PublicHoliday", b =>
                 {
                     b.Property<long>("Id")
@@ -413,6 +452,17 @@ namespace LeaveManagementAPI.Migrations
                     b.Navigation("Receiver");
 
                     b.Navigation("Sender");
+                });
+
+            modelBuilder.Entity("LeaveManagementAPI.Entities.RealtimeConnection", b =>
+                {
+                    b.HasOne("LeaveManagementAPI.Entities.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("User");
                 });
 
             modelBuilder.Entity("LeaveManagementAPI.Entities.UserWorkplace", b =>

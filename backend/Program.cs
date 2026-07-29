@@ -28,6 +28,7 @@ builder.Services.AddHttpClient<IPublicHolidayService, PublicHolidayService>(clie
 builder.Services.AddScoped<ILeaveDayCalculator, LeaveDayCalculator>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddSingleton<IStompMessageBroker, StompMessageBroker>();
+builder.Services.AddScoped<IRealtimePresenceService, RealtimePresenceService>();
 builder.Services.AddHostedService<SoftDeletedWorkplacePurgeService>();
 
 // Controllers with JSON options
@@ -155,6 +156,8 @@ using (var scope = app.Services.CreateScope())
     try
     {
         dbContext.Database.Migrate();
+        await scope.ServiceProvider.GetRequiredService<IRealtimePresenceService>()
+            .CloseOrphanedConnectionsAsync();
     }
     catch (Exception ex)
     {

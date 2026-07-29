@@ -2,6 +2,7 @@ using System.IdentityModel.Tokens.Jwt;
 using LeaveManagementAPI.Data;
 using LeaveManagementAPI.Enums;
 using LeaveManagementAPI.Models.Dashboard;
+using LeaveManagementAPI.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,7 +12,9 @@ namespace LeaveManagementAPI.Controller
     [ApiController]
     [Route("api/dashboard")]
     [Authorize(Roles = "ADMIN,HR")]
-    public class DashboardController(AppDbContext context) : ControllerBase
+    public class DashboardController(
+        AppDbContext context,
+        IRealtimePresenceService presenceService) : ControllerBase
     {
         private const int CriticalLeaveBalanceThreshold = 3;
 
@@ -171,8 +174,12 @@ namespace LeaveManagementAPI.Controller
                 TotalEmployeeCount = await context.Users.CountAsync(user => user.IsActive
                     && user.Role == UserRole.EMPLOYEE, cancellationToken),
                 WorkplaceComparison = workplaceComparison,
-                // Aktif baglanti takibi icin SignalR/oturum tablosu henuz bulunmuyor.
-                SystemUsage = new SystemUsageResponse()
+                SystemUsage = new SystemUsageResponse
+                {
+                    Status = "AVAILABLE",
+                    ActiveConnectionCount = await presenceService.GetActiveConnectionCountAsync(cancellationToken),
+                    ActiveUserCount = await presenceService.GetActiveUserCountAsync(cancellationToken)
+                }
             };
         }
 
