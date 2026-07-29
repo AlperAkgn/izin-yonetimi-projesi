@@ -7,6 +7,7 @@ using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using LeaveManagementAPI.Data;
 using LeaveManagementAPI.Services;
+using LeaveManagementAPI.WebSockets;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -25,6 +26,8 @@ builder.Services.AddHttpClient<IPublicHolidayService, PublicHolidayService>(clie
     client.Timeout = TimeSpan.FromSeconds(15);
 });
 builder.Services.AddScoped<ILeaveDayCalculator, LeaveDayCalculator>();
+builder.Services.AddScoped<IMessageService, MessageService>();
+builder.Services.AddSingleton<IStompMessageBroker, StompMessageBroker>();
 builder.Services.AddHostedService<SoftDeletedWorkplacePurgeService>();
 
 // Controllers with JSON options
@@ -55,6 +58,19 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
         options.MapInboundClaims = false;
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                if (context.HttpContext.Request.Path.StartsWithSegments("/ws")
+                    && context.Request.Query.TryGetValue("access_token", out var token))
+                {
+                    context.Token = token;
+                }
+
+                return Task.CompletedTask;
+            }
+        };
         options.TokenValidationParameters = new TokenValidationParameters
         {
             ValidateIssuer = true,
@@ -159,8 +175,10 @@ app.UseSwaggerUI(options =>
 
 app.UseHttpsRedirection();
 app.UseCors("AllowAll");
+app.UseWebSockets();
 app.UseAuthentication();
 app.UseAuthorization();
+app.UseMiddleware<StompWebSocketMiddleware>();
 app.MapControllers();
 
 app.Run();
