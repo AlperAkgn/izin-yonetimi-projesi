@@ -32,7 +32,10 @@ namespace LeaveManagementAPI.Controller
 
             if (currentUser.Role == UserRole.HR)
             {
-                var hrDashboard = await BuildHrDashboardAsync(currentUser.Id, cancellationToken);
+                var hrDashboard = await BuildHrDashboardAsync(
+                    currentUser.Id,
+                    $"{currentUser.Name} {currentUser.Surname}".Trim(),
+                    cancellationToken);
                 if (hrDashboard is null)
                 {
                     return NotFound(new { message = "Erisilebilir aktif is yeri bulunamadi." });
@@ -59,6 +62,7 @@ namespace LeaveManagementAPI.Controller
 
         private async Task<HrDashboardResponse?> BuildHrDashboardAsync(
             long hrUserId,
+            string hrName,
             CancellationToken cancellationToken)
         {
             var workplaceQuery = context.Workplaces.Where(workplace => workplace.IsActive
@@ -120,6 +124,7 @@ namespace LeaveManagementAPI.Controller
 
             return new HrDashboardResponse
             {
+                HrName = hrName,
                 Workplace = new WorkplaceSummaryResponse { Id = workplace.Id, Name = workplace.Name },
                 EmployeeCount = employees.Count,
                 HrCount = await context.UserWorkplaces.CountAsync(mapping => mapping.WorkplaceId == workplace.Id
@@ -140,6 +145,13 @@ namespace LeaveManagementAPI.Controller
 
         private async Task<AdminDashboardResponse> BuildAdminDashboardAsync(CancellationToken cancellationToken)
         {
+            var adminNames = await context.Users
+                .Where(user => user.IsActive && user.Role == UserRole.ADMIN)
+                .OrderBy(user => user.Name)
+                .ThenBy(user => user.Surname)
+                .Select(user => $"{user.Name} {user.Surname}".Trim())
+                .ToListAsync(cancellationToken);
+
             var workplaceComparison = await context.Workplaces
                 .Where(workplace => workplace.IsActive)
                 .OrderBy(workplace => workplace.Name)
@@ -154,17 +166,11 @@ namespace LeaveManagementAPI.Controller
 
             return new AdminDashboardResponse
             {
+                AdminNames = adminNames,
                 ActiveWorkplaceCount = workplaceComparison.Count,
                 TotalEmployeeCount = await context.Users.CountAsync(user => user.IsActive
                     && user.Role == UserRole.EMPLOYEE, cancellationToken),
                 WorkplaceComparison = workplaceComparison,
-                SoftDeletedData = new SoftDeletedDataSummaryResponse
-                {
-                    WorkplaceCount = await context.Workplaces.IgnoreQueryFilters()
-                        .CountAsync(workplace => workplace.DeletedAt != null, cancellationToken),
-                    UserCount = await context.Users.IgnoreQueryFilters()
-                        .CountAsync(user => user.DeletedAt != null, cancellationToken)
-                },
                 // Aktif baglanti takibi icin SignalR/oturum tablosu henuz bulunmuyor.
                 SystemUsage = new SystemUsageResponse()
             };

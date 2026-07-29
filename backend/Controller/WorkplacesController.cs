@@ -241,10 +241,11 @@ namespace LeaveManagementAPI.Controller
             if (!HasRequiredTextFields(
                 request.Name,
                 request.Address,
+                request.City,
                 request.PhoneNumber,
                 request.Mail))
             {
-                return BadRequest(new { message = "Name, address, phoneNumber ve mail alanlari bos olamaz." });
+                return BadRequest(new { message = "Name, address, city, phoneNumber ve mail alanlari bos olamaz." });
             }
 
             var normalizedMail = request.Mail.Trim().ToLowerInvariant();
@@ -262,6 +263,7 @@ namespace LeaveManagementAPI.Controller
             {
                 Name = request.Name.Trim(),
                 Address = request.Address.Trim(),
+                City = request.City.Trim(),
                 PhoneNumber = request.PhoneNumber.Trim(),
                 Mail = normalizedMail,
                 LeaveCount = request.LeaveCount ?? DefaultLeaveCount,
@@ -296,10 +298,11 @@ namespace LeaveManagementAPI.Controller
             if (!HasRequiredTextFields(
                 request.Name,
                 request.Address,
+                request.City,
                 request.PhoneNumber,
                 request.Mail))
             {
-                return BadRequest(new { message = "Name, address, phoneNumber ve mail alanlari bos olamaz." });
+                return BadRequest(new { message = "Name, address, city, phoneNumber ve mail alanlari bos olamaz." });
             }
 
             var workplace = await GetAccessibleWorkplace(id, auth.AdminId);
@@ -321,6 +324,7 @@ namespace LeaveManagementAPI.Controller
 
             workplace.Name = request.Name.Trim();
             workplace.Address = request.Address.Trim();
+            workplace.City = request.City.Trim();
             workplace.PhoneNumber = request.PhoneNumber.Trim();
             workplace.Mail = normalizedMail;
             workplace.LeaveCount = request.LeaveCount ?? DefaultLeaveCount;
@@ -506,6 +510,7 @@ namespace LeaveManagementAPI.Controller
                 Id = workplace.Id,
                 Name = workplace.Name,
                 Address = workplace.Address,
+                City = workplace.City,
                 PhoneNumber = workplace.PhoneNumber,
                 Mail = workplace.Mail,
                 IsActive = workplace.IsActive,

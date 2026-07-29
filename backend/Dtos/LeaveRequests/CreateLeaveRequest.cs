@@ -5,9 +5,6 @@ namespace LeaveManagementAPI.Models.LeaveRequests
 {
     public class CreateLeaveRequest
     {
-        [Range(1, long.MaxValue)]
-        public long WorkplaceId { get; set; }
-
         [Required]
         public LeaveType LeaveType { get; set; }
 
