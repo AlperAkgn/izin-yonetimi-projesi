@@ -158,6 +158,7 @@ namespace LeaveManagementAPI.WebSockets
             {
                 var response = await messageService.SendAsync(request, cancellationToken);
                 await messageBroker.PublishToUserAsync(response.ReceiverId, response, cancellationToken);
+                await messageBroker.PublishToUserAsync(response.SenderId, response, cancellationToken);
                 await SendFrameAsync(socket, $"RECEIPT\nreceipt-id:{response.Id}\n\n\0", cancellationToken);
             }
             catch (ArgumentException exception)
