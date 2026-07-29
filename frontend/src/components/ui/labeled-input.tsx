@@ -15,12 +15,26 @@ const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
 type Props = TextInputProps & {
   label: string;
   maxLength?: number;
+  /** Doluysa kenarlık kırmızıya döner ve alanın altında mesaj çıkar */
+  error?: string;
 };
 
-export function LabeledInput({ label, maxLength, value, onFocus, onBlur, ...rest }: Props) {
+export function LabeledInput({
+  label,
+  maxLength,
+  error,
+  value,
+  onFocus,
+  onBlur,
+  ...rest
+}: Props) {
   const { colors } = useDesign();
   const length = value?.length ?? 0;
   const focusProgress = useSharedValue(0);
+
+  // Sayaç limit tanımlıysa hep görünür; limite gelince kırmızıya döner
+  const showCounter = maxLength !== undefined;
+  const atLimit = maxLength !== undefined && length >= maxLength;
 
   const animatedBorderStyle = useAnimatedStyle(() => ({
     borderColor: interpolateColor(focusProgress.value, [0, 1], [colors.border, colors.primary]),
@@ -29,6 +43,7 @@ export function LabeledInput({ label, maxLength, value, onFocus, onBlur, ...rest
   return (
     <View style={styles.wrap}>
       <ThemedText style={[styles.label, { color: colors.textMuted }]}>{label}</ThemedText>
+
       <AnimatedTextInput
         placeholderTextColor={colors.textFaint}
         maxLength={maxLength}
@@ -46,19 +61,33 @@ export function LabeledInput({ label, maxLength, value, onFocus, onBlur, ...rest
           styles.input,
           { color: colors.text, backgroundColor: colors.surfaceRaised },
           animatedBorderStyle,
+          // Hata odak animasyonunu ezmeli — bu yüzden en sonda
+          error ? { borderColor: colors.danger } : null,
           rest.style,
         ]}
       />
-      {maxLength !== undefined && (
-        <ThemedText style={[styles.counter, { color: colors.textFaint }]}>
-          {length}/{maxLength}
-        </ThemedText>
+
+      {(error || showCounter) && (
+        <View style={styles.footer}>
+          {error ? (
+            <ThemedText style={[styles.error, { color: colors.danger }]}>{error}</ThemedText>
+          ) : (
+            <View style={styles.grow} />
+          )}
+          {showCounter && (
+            <ThemedText
+              style={[styles.counter, { color: atLimit ? colors.danger : colors.textFaint }]}>
+              {length}/{maxLength}
+            </ThemedText>
+          )}
+        </View>
       )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
+  grow: { flex: 1 },
   wrap: { gap: 4 },
   label: { fontSize: 13, fontWeight: '600' },
   input: {
@@ -68,5 +97,11 @@ const styles = StyleSheet.create({
     paddingVertical: 12,
     fontSize: 15,
   },
-  counter: { fontSize: 11, alignSelf: 'flex-end' },
+  footer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+  },
+  error: { flex: 1, fontSize: 12, fontWeight: '600' },
+  counter: { fontSize: 11 },
 });

@@ -28,7 +28,9 @@ export const Palette = {
 
   // Durum renkleri (iki modda da aynı)
   success: '#22C55E',
+  successPressed: '#1DA84E',
   danger: '#F04438',
+  dangerPressed: '#D63A2F',
   warning: '#F79009',
   canceled: '#6B7280',
 };

@@ -17,5 +17,8 @@ export function useColorScheme() {
     return colorScheme;
   }
 
-  return 'light';
+  // Hidrasyondan önceki değer uygulamanın varsayılanıyla aynı olmalı: karanlık
+  // (bkz. use-design.ts "belirsizse karanlık"). Burada 'light' dönmek, koyu
+  // zemin çizilirken yazının bir kare siyah kalmasına yol açıyordu.
+  return 'dark';
 }
