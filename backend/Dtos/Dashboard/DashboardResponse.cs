@@ -25,6 +25,7 @@ namespace LeaveManagementAPI.Models.Dashboard
         public int TotalEmployeeCount { get; set; }
         public List<WorkplaceEmployeeCountResponse> WorkplaceComparison { get; set; } = [];
         public SystemUsageResponse SystemUsage { get; set; } = new();
+        public SoftDeletedDataVolumeResponse SoftDeletedDataVolume { get; set; } = new();
     }
 
     public class WorkplaceSummaryResponse
@@ -68,5 +69,14 @@ namespace LeaveManagementAPI.Models.Dashboard
         public string Status { get; set; } = "NOT_AVAILABLE";
         public int? ActiveConnectionCount { get; set; }
         public int? ActiveUserCount { get; set; }
+    }
+
+    public class SoftDeletedDataVolumeResponse
+    {
+        public int TotalCount { get; set; }
+        public int Users { get; set; }
+        public int Workplaces { get; set; }
+        public int LeaveRequests { get; set; }
+        public DateTime? OldestDeletedAt { get; set; }
     }
 }

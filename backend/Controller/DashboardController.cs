@@ -19,7 +19,9 @@ namespace LeaveManagementAPI.Controller
         private const int CriticalLeaveBalanceThreshold = 3;
 
         [HttpGet]
-        public async Task<ActionResult<DashboardResponse>> Get(CancellationToken cancellationToken)
+        public async Task<ActionResult<DashboardResponse>> Get(
+            [FromQuery] long? workplaceId,
+            CancellationToken cancellationToken)
         {
             if (!TryGetCurrentUserId(out var userId))
             {
@@ -38,6 +40,7 @@ namespace LeaveManagementAPI.Controller
                 var hrDashboard = await BuildHrDashboardAsync(
                     currentUser.Id,
                     $"{currentUser.Name} {currentUser.Surname}".Trim(),
+                    workplaceId,
                     cancellationToken);
                 if (hrDashboard is null)
                 {
@@ -66,10 +69,16 @@ namespace LeaveManagementAPI.Controller
         private async Task<HrDashboardResponse?> BuildHrDashboardAsync(
             long hrUserId,
             string hrName,
+            long? requestedWorkplaceId,
             CancellationToken cancellationToken)
         {
             var workplaceQuery = context.Workplaces.Where(workplace => workplace.IsActive
                 && workplace.UserWorkplaces.Any(mapping => mapping.UserId == hrUserId));
+
+            if (requestedWorkplaceId is not null)
+            {
+                workplaceQuery = workplaceQuery.Where(item => item.Id == requestedWorkplaceId);
+            }
 
             var workplace = await workplaceQuery.OrderBy(item => item.Name).FirstOrDefaultAsync(cancellationToken);
             if (workplace is null)
@@ -167,6 +176,17 @@ namespace LeaveManagementAPI.Controller
                 })
                 .ToListAsync(cancellationToken);
 
+            var deletedUsers = context.Users.IgnoreQueryFilters().Where(user => user.DeletedAt != null);
+            var deletedWorkplaces = context.Workplaces.IgnoreQueryFilters().Where(workplace => workplace.DeletedAt != null);
+            var deletedLeaveRequests = context.LeaveRequests.IgnoreQueryFilters().Where(request => request.DeletedAt != null);
+            var deletedAtValues = await deletedUsers.Select(user => user.DeletedAt!.Value)
+                .Concat(deletedWorkplaces.Select(workplace => workplace.DeletedAt!.Value))
+                .Concat(deletedLeaveRequests.Select(request => request.DeletedAt!.Value))
+                .ToListAsync(cancellationToken);
+            var deletedUserCount = await deletedUsers.CountAsync(cancellationToken);
+            var deletedWorkplaceCount = await deletedWorkplaces.CountAsync(cancellationToken);
+            var deletedLeaveRequestCount = await deletedLeaveRequests.CountAsync(cancellationToken);
+
             return new AdminDashboardResponse
             {
                 AdminNames = adminNames,
@@ -179,6 +199,14 @@ namespace LeaveManagementAPI.Controller
                     Status = "AVAILABLE",
                     ActiveConnectionCount = await presenceService.GetActiveConnectionCountAsync(cancellationToken),
                     ActiveUserCount = await presenceService.GetActiveUserCountAsync(cancellationToken)
+                },
+                SoftDeletedDataVolume = new SoftDeletedDataVolumeResponse
+                {
+                    Users = deletedUserCount,
+                    Workplaces = deletedWorkplaceCount,
+                    LeaveRequests = deletedLeaveRequestCount,
+                    TotalCount = deletedUserCount + deletedWorkplaceCount + deletedLeaveRequestCount,
+                    OldestDeletedAt = deletedAtValues.Count == 0 ? null : deletedAtValues.Min()
                 }
             };
         }

@@ -26,6 +26,8 @@ namespace LeaveManagementAPI.Entities
         [Required]
         public bool IsRead { get; set; }
 
+        public virtual ICollection<MessageAttachment> Attachments { get; set; } = new List<MessageAttachment>();
+
         [ForeignKey(nameof(SenderId))]
         public virtual User Sender { get; set; } = null!;
 

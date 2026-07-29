@@ -20,6 +20,7 @@ appsettings.Development.json
 *.log
 *.tmp
 *.cache
+App_Data/message-uploads/
 
 # OS files
 .DS_Store

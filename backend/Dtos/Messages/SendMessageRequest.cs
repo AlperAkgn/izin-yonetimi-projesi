@@ -10,8 +10,9 @@ namespace LeaveManagementAPI.Models.Messages
         [Range(1, long.MaxValue)]
         public long ReceiverId { get; set; }
 
-        [Required]
         [MaxLength(4000)]
         public string Content { get; set; } = string.Empty;
+
+        public long? AttachmentId { get; set; }
     }
 }

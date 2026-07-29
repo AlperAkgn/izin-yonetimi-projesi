@@ -26,10 +26,13 @@ builder.Services.AddHttpClient<IPublicHolidayService, PublicHolidayService>(clie
     client.Timeout = TimeSpan.FromSeconds(15);
 });
 builder.Services.AddScoped<ILeaveDayCalculator, LeaveDayCalculator>();
+builder.Services.AddScoped<IPublicHolidayCatalogService, PublicHolidayCatalogService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddSingleton<IStompMessageBroker, StompMessageBroker>();
 builder.Services.AddScoped<IRealtimePresenceService, RealtimePresenceService>();
 builder.Services.AddHostedService<SoftDeletedWorkplacePurgeService>();
+builder.Services.AddHostedService<MessageRetentionService>();
+builder.Services.AddHostedService<PublicHolidaySyncService>();
 
 // Controllers with JSON options
 builder.Services.AddControllers()
@@ -149,6 +152,19 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+app.UseExceptionHandler(errorApp => errorApp.Run(async httpContext =>
+{
+    var error = httpContext.Features.Get<Microsoft.AspNetCore.Diagnostics.IExceptionHandlerFeature>()?.Error;
+    if (error is HolidayDataUnavailableException)
+    {
+        httpContext.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+        await httpContext.Response.WriteAsJsonAsync(new { message = "Resmi tatil takvimi henuz hazir degil. Lutfen daha sonra tekrar deneyin." });
+        return;
+    }
+    httpContext.Response.StatusCode = StatusCodes.Status500InternalServerError;
+    await httpContext.Response.WriteAsJsonAsync(new { message = "Beklenmeyen bir sunucu hatasi olustu." });
+}));
 
 using (var scope = app.Services.CreateScope())
 {
