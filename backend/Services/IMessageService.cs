@@ -9,5 +9,6 @@ namespace LeaveManagementAPI.Services
             long firstUserId,
             long secondUserId,
             CancellationToken cancellationToken = default);
+        Task MarkConversationReadAsync(long readerId, long otherUserId, CancellationToken cancellationToken = default);
     }
 }

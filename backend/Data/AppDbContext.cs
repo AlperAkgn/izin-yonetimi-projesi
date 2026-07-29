@@ -18,11 +18,13 @@ namespace LeaveManagementAPI.Data
         public DbSet<UserWorkplace> UserWorkplaces { get; set; }
         public DbSet<PublicHoliday> PublicHolidays { get; set; }
         public DbSet<Message> Messages { get; set; }
+        public DbSet<MessageAttachment> MessageAttachments { get; set; }
         public DbSet<RealtimeConnection> RealtimeConnections { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             modelBuilder.ApplyConfiguration(new MessageConfiguration());
+            modelBuilder.ApplyConfiguration(new MessageAttachmentConfiguration());
             modelBuilder.ApplyConfiguration(new RealtimeConnectionConfiguration());
 
             modelBuilder.Entity<User>()

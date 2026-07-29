@@ -14,10 +14,10 @@ namespace LeaveManagementAPI.Services
                 throw new ArgumentException("Gonderici ve alici ayni kullanici olamaz.");
             }
 
-            var content = request.Content?.Trim();
-            if (string.IsNullOrWhiteSpace(content))
+            var content = request.Content?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(content) && request.AttachmentId is null)
             {
-                throw new ArgumentException("Mesaj icerigi bos olamaz.");
+                throw new ArgumentException("Mesaj icerigi veya dosya eki zorunludur.");
             }
 
             if (content.Length > 4000)
@@ -42,6 +42,19 @@ namespace LeaveManagementAPI.Services
                 IsRead = false
             };
 
+            if (request.AttachmentId is not null)
+            {
+                var attachment = await context.MessageAttachments.SingleOrDefaultAsync(item =>
+                    item.Id == request.AttachmentId && item.MessageId == null &&
+                    item.UploadedByUserId == request.SenderId, cancellationToken);
+                if (attachment is null)
+                {
+                    throw new KeyNotFoundException("Mesaj eki bulunamadi veya bu kullaniciya ait degil.");
+                }
+
+                message.Attachments.Add(attachment);
+            }
+
             context.Messages.Add(message);
             await context.SaveChangesAsync(cancellationToken);
 
@@ -53,20 +66,23 @@ namespace LeaveManagementAPI.Services
             long secondUserId,
             CancellationToken cancellationToken = default)
         {
-            return await context.Messages
+            var messages = await context.Messages
+                .AsNoTracking()
+                .Include(message => message.Attachments)
                 .Where(message =>
                     (message.SenderId == firstUserId && message.ReceiverId == secondUserId)
                     || (message.SenderId == secondUserId && message.ReceiverId == firstUserId))
                 .OrderBy(message => message.Timestamp)
-                .Select(message => new MessageResponse
-                {
-                    Id = message.Id,
-                    SenderId = message.SenderId,
-                    ReceiverId = message.ReceiverId,
-                    Content = message.Content,
-                    Timestamp = message.Timestamp
-                })
                 .ToListAsync(cancellationToken);
+
+            return messages.Select(ToResponse).ToList();
+        }
+
+        public async Task MarkConversationReadAsync(long readerId, long otherUserId, CancellationToken cancellationToken = default)
+        {
+            await context.Messages
+                .Where(message => message.SenderId == otherUserId && message.ReceiverId == readerId && !message.IsRead)
+                .ExecuteUpdateAsync(setters => setters.SetProperty(message => message.IsRead, true), cancellationToken);
         }
 
         private static MessageResponse ToResponse(Message message) => new()
@@ -75,7 +91,16 @@ namespace LeaveManagementAPI.Services
             SenderId = message.SenderId,
             ReceiverId = message.ReceiverId,
             Content = message.Content,
-            Timestamp = message.Timestamp
+            Timestamp = message.Timestamp,
+            IsRead = message.IsRead,
+            Attachments = message.Attachments.Select(attachment => new AttachmentResponse
+            {
+                Id = attachment.Id,
+                FileName = attachment.OriginalFileName,
+                ContentType = attachment.ContentType,
+                SizeBytes = attachment.SizeBytes,
+                DownloadUrl = $"/api/messages/attachments/{attachment.Id}"
+            }).ToList()
         };
     }
 }
