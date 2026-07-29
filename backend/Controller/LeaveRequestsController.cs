@@ -104,16 +104,15 @@ namespace LeaveManagementAPI.Controller
                 return BadRequest(new { message = "Izinde bulunulacak adres zorunludur." });
             }
 
-            var userWorkplace = await _context.UserWorkplaces
-                .SingleOrDefaultAsync(mapping => mapping.UserId == currentUser.Id && mapping.WorkplaceId == request.WorkplaceId, cancellationToken);
+            var userWorkplace = await GetSingleWorkplaceAssignmentAsync(currentUser.Id, cancellationToken);
             if (userWorkplace is null)
             {
-                return NotFound(new { message = "Is yeri bulunamadi veya bu is yerine erisiminiz yok." });
+                return BadRequest(new { message = "Kullanici icin tek bir aktif is yeri bulunamadi." });
             }
 
             var overlapsExistingRequest = await _context.LeaveRequests
                 .AnyAsync(existingRequest => existingRequest.UserId == currentUser.Id
-                    && existingRequest.WorkplaceId == request.WorkplaceId
+                    && existingRequest.WorkplaceId == userWorkplace.WorkplaceId
                     && (existingRequest.Status == LeaveStatus.PENDING || existingRequest.Status == LeaveStatus.APPROVED)
                     && existingRequest.StartDate <= endDate
                     && existingRequest.EndDate >= startDate,
@@ -138,7 +137,7 @@ namespace LeaveManagementAPI.Controller
                 ? null
                 : await GetAnnualLeaveLimitExceededReasonAsync(
                     currentUser.Id,
-                    request.WorkplaceId,
+                    userWorkplace.WorkplaceId,
                     userWorkplace.AnnualLeaveCount,
                     startDate,
                     endDate,
@@ -148,7 +147,7 @@ namespace LeaveManagementAPI.Controller
             var leaveRequest = new LeaveRequest
             {
                 UserId = currentUser.Id,
-                WorkplaceId = request.WorkplaceId,
+                WorkplaceId = userWorkplace.WorkplaceId,
                 LeaveType = request.LeaveType,
                 StartDate = startDate,
                 EndDate = endDate,
@@ -224,17 +223,15 @@ namespace LeaveManagementAPI.Controller
                 return BadRequest(new { message = "Izinde bulunulacak adres zorunludur." });
             }
 
-            var userWorkplace = await _context.UserWorkplaces.SingleOrDefaultAsync(
-                mapping => mapping.UserId == employee.Id && mapping.WorkplaceId == request.WorkplaceId,
-                cancellationToken);
+            var userWorkplace = await GetSingleWorkplaceAssignmentAsync(employee.Id, cancellationToken);
             if (userWorkplace is null)
             {
-                return BadRequest(new { message = "Calisan secilen is yerine atanmamis." });
+                return BadRequest(new { message = "Calisan icin tek bir aktif is yeri bulunamadi." });
             }
 
             var overlapsExistingRequest = await _context.LeaveRequests.AnyAsync(existingRequest =>
                 existingRequest.UserId == employee.Id
-                && existingRequest.WorkplaceId == request.WorkplaceId
+                && existingRequest.WorkplaceId == userWorkplace.WorkplaceId
                 && (existingRequest.Status == LeaveStatus.PENDING || existingRequest.Status == LeaveStatus.APPROVED)
                 && existingRequest.StartDate <= endDate
                 && existingRequest.EndDate >= startDate,
@@ -256,13 +253,13 @@ namespace LeaveManagementAPI.Controller
             var rejectionReason = isEmergencyLeave
                 ? null
                 : await GetAnnualLeaveLimitExceededReasonAsync(
-                    employee.Id, request.WorkplaceId, userWorkplace.AnnualLeaveCount,
+                    employee.Id, userWorkplace.WorkplaceId, userWorkplace.AnnualLeaveCount,
                     startDate, endDate, null, cancellationToken);
 
             var leaveRequest = new LeaveRequest
             {
                 UserId = employee.Id,
-                WorkplaceId = request.WorkplaceId,
+                WorkplaceId = userWorkplace.WorkplaceId,
                 LeaveType = request.LeaveType,
                 StartDate = startDate,
                 EndDate = endDate,
@@ -410,7 +407,10 @@ namespace LeaveManagementAPI.Controller
 
         [HttpPost("{id:long}/reject")]
         [Authorize(Roles = "ADMIN,HR")]
-        public async Task<ActionResult<LeaveRequestResponse>> Reject(long id, CancellationToken cancellationToken)
+        public async Task<ActionResult<LeaveRequestResponse>> Reject(
+            long id,
+            RejectLeaveRequest request,
+            CancellationToken cancellationToken)
         {
             var currentUser = await GetCurrentUserAsync();
             if (currentUser is null)
@@ -440,16 +440,22 @@ namespace LeaveManagementAPI.Controller
                 return BadRequest(new { message = "Yalnizca bekleyen izin talepleri reddedilebilir." });
             }
 
+            var rejectionReason = string.IsNullOrWhiteSpace(request.RejectionReason)
+                ? null
+                : request.RejectionReason.Trim();
+
             var requestUpdated = await _context.LeaveRequests
                 .Where(request => request.Id == leaveRequest.Id && request.Status == LeaveStatus.PENDING)
                 .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(request => request.Status, LeaveStatus.REJECTED), cancellationToken);
+                    .SetProperty(request => request.Status, LeaveStatus.REJECTED)
+                    .SetProperty(request => request.RejectionReason, rejectionReason), cancellationToken);
             if (requestUpdated == 0)
             {
                 return Conflict(new { message = "Izin talebinin durumu degisti. Sayfayi yenileyip tekrar deneyin." });
             }
 
             leaveRequest.Status = LeaveStatus.REJECTED;
+            leaveRequest.RejectionReason = rejectionReason;
             _context.Entry(leaveRequest).State = EntityState.Detached;
             _context.LeaveRequestAudits.Add(new LeaveRequestAudit
             {
@@ -489,13 +495,15 @@ namespace LeaveManagementAPI.Controller
             var requestUpdated = await _context.LeaveRequests
                 .Where(request => request.Id == leaveRequest.Id && request.Status == previousStatus)
                 .ExecuteUpdateAsync(setters => setters
-                    .SetProperty(request => request.Status, LeaveStatus.CANCELLED), cancellationToken);
+                    .SetProperty(request => request.Status, LeaveStatus.CANCELLED)
+                    .SetProperty(request => request.RejectionReason, (string?)null), cancellationToken);
             if (requestUpdated == 0)
             {
                 return Conflict(new { message = "Izin talebinin durumu degisti. Sayfayi yenileyip tekrar deneyin." });
             }
 
             leaveRequest.Status = LeaveStatus.CANCELLED;
+            leaveRequest.RejectionReason = null;
             _context.Entry(leaveRequest).State = EntityState.Detached;
             _context.LeaveRequestAudits.Add(new LeaveRequestAudit
             {
@@ -518,6 +526,19 @@ namespace LeaveManagementAPI.Controller
             }
 
             return await _context.Users.SingleOrDefaultAsync(user => user.Id == userId && user.IsActive);
+        }
+
+        private async Task<UserWorkplace?> GetSingleWorkplaceAssignmentAsync(
+            long userId,
+            CancellationToken cancellationToken)
+        {
+            var assignments = await _context.UserWorkplaces
+                .Where(mapping => mapping.UserId == userId && mapping.Workplace.IsActive)
+                .OrderBy(mapping => mapping.WorkplaceId)
+                .Take(2)
+                .ToListAsync(cancellationToken);
+
+            return assignments.Count == 1 ? assignments[0] : null;
         }
 
         private async Task<bool> CanAccessWorkplaceRequestsAsync(User currentUser, long workplaceId)

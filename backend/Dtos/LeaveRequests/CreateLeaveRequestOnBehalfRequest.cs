@@ -10,9 +10,6 @@ namespace LeaveManagementAPI.Models.LeaveRequests
         [MaxLength(256)]
         public string EmployeeMail { get; set; } = string.Empty;
 
-        [Range(1, long.MaxValue)]
-        public long WorkplaceId { get; set; }
-
         [Required]
         public LeaveType LeaveType { get; set; }
 

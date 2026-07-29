@@ -97,6 +97,50 @@ namespace LeaveManagementAPI.Migrations
                     b.ToTable("LeaveRequest");
                 });
 
+            modelBuilder.Entity("LeaveManagementAPI.Entities.Message", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasColumnName("id");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Content")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("character varying(4000)")
+                        .HasColumnName("content");
+
+                    b.Property<bool>("IsRead")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false)
+                        .HasColumnName("isRead");
+
+                    b.Property<long>("ReceiverId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("receiverId");
+
+                    b.Property<long>("SenderId")
+                        .HasColumnType("bigint")
+                        .HasColumnName("senderId");
+
+                    b.Property<DateTime>("Timestamp")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamp with time zone")
+                        .HasDefaultValueSql("CURRENT_TIMESTAMP")
+                        .HasColumnName("timestamp");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReceiverId", "Timestamp");
+
+                    b.HasIndex("SenderId", "Timestamp");
+
+                    b.ToTable("Messages");
+                });
+
             modelBuilder.Entity("LeaveManagementAPI.Entities.PublicHoliday", b =>
                 {
                     b.Property<long>("Id")
@@ -271,6 +315,12 @@ namespace LeaveManagementAPI.Migrations
                         .HasColumnType("character varying(500)")
                         .HasColumnName("address");
 
+                    b.Property<string>("City")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)")
+                        .HasColumnName("city");
+
                     b.Property<DateTime?>("DeletedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("deletedAt");
@@ -344,6 +394,25 @@ namespace LeaveManagementAPI.Migrations
                     b.Navigation("ActionByUser");
 
                     b.Navigation("LeaveRequest");
+                });
+
+            modelBuilder.Entity("LeaveManagementAPI.Entities.Message", b =>
+                {
+                    b.HasOne("LeaveManagementAPI.Entities.User", "Receiver")
+                        .WithMany()
+                        .HasForeignKey("ReceiverId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("LeaveManagementAPI.Entities.User", "Sender")
+                        .WithMany()
+                        .HasForeignKey("SenderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Receiver");
+
+                    b.Navigation("Sender");
                 });
 
             modelBuilder.Entity("LeaveManagementAPI.Entities.UserWorkplace", b =>

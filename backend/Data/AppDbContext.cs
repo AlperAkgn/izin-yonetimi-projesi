@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using LeaveManagementAPI.Entities;
 using LeaveManagementAPI.Enums;
+using LeaveManagementAPI.Data.Configurations;
 
 namespace LeaveManagementAPI.Data
 {
@@ -16,9 +17,12 @@ namespace LeaveManagementAPI.Data
         public DbSet<LeaveRequestAudit> LeaveRequestAudits { get; set; }
         public DbSet<UserWorkplace> UserWorkplaces { get; set; }
         public DbSet<PublicHoliday> PublicHolidays { get; set; }
+        public DbSet<Message> Messages { get; set; }
 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
+            modelBuilder.ApplyConfiguration(new MessageConfiguration());
+
             modelBuilder.Entity<User>()
                 .Property(u => u.Role)
                 .HasConversion<string>()

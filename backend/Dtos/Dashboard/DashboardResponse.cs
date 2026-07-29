@@ -9,6 +9,7 @@ namespace LeaveManagementAPI.Models.Dashboard
 
     public class HrDashboardResponse
     {
+        public string HrName { get; set; } = string.Empty;
         public WorkplaceSummaryResponse Workplace { get; set; } = new();
         public int EmployeeCount { get; set; }
         public int HrCount { get; set; }
@@ -19,10 +20,10 @@ namespace LeaveManagementAPI.Models.Dashboard
 
     public class AdminDashboardResponse
     {
+        public List<string> AdminNames { get; set; } = [];
         public int ActiveWorkplaceCount { get; set; }
         public int TotalEmployeeCount { get; set; }
         public List<WorkplaceEmployeeCountResponse> WorkplaceComparison { get; set; } = [];
-        public SoftDeletedDataSummaryResponse SoftDeletedData { get; set; } = new();
         public SystemUsageResponse SystemUsage { get; set; } = new();
     }
 
@@ -60,13 +61,6 @@ namespace LeaveManagementAPI.Models.Dashboard
         public long WorkplaceId { get; set; }
         public string WorkplaceName { get; set; } = string.Empty;
         public int EmployeeCount { get; set; }
-    }
-
-    public class SoftDeletedDataSummaryResponse
-    {
-        public int WorkplaceCount { get; set; }
-        public int UserCount { get; set; }
-        public int TotalCount => WorkplaceCount + UserCount;
     }
 
     public class SystemUsageResponse
