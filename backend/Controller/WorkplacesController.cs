@@ -196,6 +196,75 @@ namespace LeaveManagementAPI.Controller
             return Ok(ToUserResponse(userWorkplace.User, userWorkplace.AnnualLeaveCount));
         }
 
+        [HttpPut("{id:long}/users/{userId:long}/move")]
+        public async Task<ActionResult<WorkplaceUserResponse>> MoveUser(
+            long id,
+            long userId,
+            MoveWorkplaceUserRequest request,
+            CancellationToken cancellationToken)
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            if (id == request.TargetWorkplaceId)
+            {
+                return BadRequest(new { message = "Hedef is yeri kaynak is yeriyle ayni olamaz." });
+            }
+
+            if (!await HasWorkplaceAccess(id, auth.AdminId)
+                || !await HasWorkplaceAccess(request.TargetWorkplaceId, auth.AdminId))
+            {
+                return NotFound(new { message = "Kaynak veya hedef is yerine erisiminiz yok." });
+            }
+
+            var sourceAssignment = await _context.UserWorkplaces
+                .Include(mapping => mapping.User)
+                .SingleOrDefaultAsync(mapping => mapping.UserId == userId && mapping.WorkplaceId == id, cancellationToken);
+            if (sourceAssignment is null || !sourceAssignment.User.IsActive)
+            {
+                return NotFound(new { message = "Kullanici kaynak is yerinde bulunamadi." });
+            }
+
+            if (sourceAssignment.User.Role == UserRole.ADMIN)
+            {
+                return BadRequest(new { message = "Yonetici is yeri atamasi bu endpoint ile tasinamaz." });
+            }
+
+            var targetWorkplaceIsActive = await _context.Workplaces
+                .AnyAsync(workplace => workplace.Id == request.TargetWorkplaceId && workplace.IsActive, cancellationToken);
+            if (!targetWorkplaceIsActive)
+            {
+                return NotFound(new { message = "Hedef is yeri aktif degil veya bulunamadi." });
+            }
+
+            var alreadyAssigned = await _context.UserWorkplaces.AnyAsync(
+                mapping => mapping.UserId == userId && mapping.WorkplaceId == request.TargetWorkplaceId,
+                cancellationToken);
+            if (alreadyAssigned)
+            {
+                return Conflict(new { message = "Kullanici zaten hedef is yerine atanmis." });
+            }
+
+            var annualLeaveCount = sourceAssignment.AnnualLeaveCount;
+            var user = sourceAssignment.User;
+            await using var transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
+
+            _context.UserWorkplaces.Remove(sourceAssignment);
+            _context.UserWorkplaces.Add(new UserWorkplace
+            {
+                UserId = userId,
+                WorkplaceId = request.TargetWorkplaceId,
+                AnnualLeaveCount = annualLeaveCount
+            });
+            await _context.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+
+            return Ok(ToUserResponse(user, annualLeaveCount));
+        }
+
         [HttpDelete("{id:long}/users/{userId:long}")]
         public async Task<IActionResult> RemoveUser(long id, long userId, CancellationToken cancellationToken)
         {
