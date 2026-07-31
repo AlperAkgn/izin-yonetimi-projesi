@@ -81,6 +81,8 @@ export default function DrawerLayout() {
         options={{
           title: 'İzinlerim',
           drawerIcon: ({ color, size }) => <Feather name="calendar" size={size} color={color} />,
+          // Admin kendi adına izin talep etmez; karşılığı "Çalışan İzin Yaz"
+          drawerItemStyle: user?.role === 'ADMIN' ? { display: 'none' } : undefined,
         }}
       />
       <Drawer.Screen

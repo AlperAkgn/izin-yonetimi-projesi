@@ -109,7 +109,8 @@ function MyRequestCard({ item, index }: { item: LeaveRequest; index: number }) {
         </View>
         <View style={[styles.statusBadge, { backgroundColor: `${meta.color}18` }]}>
           <Feather name={meta.icon} size={12} color={meta.color} />
-          <ThemedText style={[styles.statusBadgeText, { color: meta.color }]}>
+          {/* "Otomatik Onaylandı" uzun; dar kartta ikondan kopup alt satıra düşmesin */}
+          <ThemedText style={[styles.statusBadgeText, { color: meta.color }]} numberOfLines={1}>
             {meta.label}
           </ThemedText>
         </View>
@@ -117,7 +118,7 @@ function MyRequestCard({ item, index }: { item: LeaveRequest; index: number }) {
 
       <View style={styles.myCardDates}>
         <Feather name="calendar" size={13} color={colors.textFaint} />
-        <ThemedText style={[styles.myCardDateText, { color: colors.text }]}>
+        <ThemedText style={[styles.myCardDateText, { color: colors.text }]} numberOfLines={1}>
           {item.startDate} → {item.endDate}
         </ThemedText>
         <View style={[styles.dayPill, { backgroundColor: colors.primarySoft }]}>
@@ -156,6 +157,12 @@ export default function LeaveRequestsScreen() {
   const { colors } = useDesign();
   const { width } = useWindowDimensions();
   const stackFields = width < 640; // ikili alanlar dar ekranda alt alta
+  /**
+   * Telefon boyutu. Bu ekranı personel yalnızca mobilde kullanıyor; burada
+   * yatay dolgular daraltılıp alanlara yer açılıyor (24+24 = 48px'lik kenar
+   * boşluğu 320-430px'lik ekranda formu belirgin şekilde sıkıştırıyordu).
+   */
+  const compact = width < 480;
 
   const [tab, setTab] = useState<Tab>('new');
 
@@ -295,8 +302,6 @@ export default function LeaveRequestsScreen() {
     });
   };
 
-  const divider = <View style={[styles.divider, { backgroundColor: colors.border }]} />;
-
   const balanceStrip = (
     <BalanceBar
       balance={balance}
@@ -312,12 +317,16 @@ export default function LeaveRequestsScreen() {
 
   return (
     <Screen scroll={false}>
-      <View style={styles.headerWrap}>
+      <View style={[styles.headerWrap, compact && styles.headerWrapCompact]}>
         <View style={styles.titleBlock}>
           <ThemedText type="title">İzinlerim</ThemedText>
-          <ThemedText style={[styles.pageSubtitle, { color: colors.textMuted }]}>
-            Yeni talep oluştur veya mevcut taleplerini takip et.
-          </ThemedText>
+          {/* Telefonda alt başlık atlanıyor — hemen altındaki sekmeler zaten
+              aynı şeyi söylüyor, ekranın üstünü boşuna dolduruyordu */}
+          {!compact && (
+            <ThemedText style={[styles.pageSubtitle, { color: colors.textMuted }]}>
+              Yeni talep oluştur veya mevcut taleplerini takip et.
+            </ThemedText>
+          )}
         </View>
 
         {balanceStrip}
@@ -335,10 +344,12 @@ export default function LeaveRequestsScreen() {
       {tab === 'new' ? (
         <ScrollView
           style={styles.flex}
-          contentContainerStyle={styles.formContent}
+          contentContainerStyle={[styles.formContent, compact && styles.contentCompact]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator>
-          <Card>
+          {/* Tek uzun kart yerine ayrı bloklar: telefonda ekrana zaten bir kart
+              sığıyor, kart içi ayıraçlar bölümleri belli etmiyordu */}
+          <Card style={compact ? styles.cardCompact : undefined}>
             {/* ── İzin Bilgileri ─────────────────────────────── */}
             <View style={styles.section}>
               <SectionHeader
@@ -387,8 +398,10 @@ export default function LeaveRequestsScreen() {
                 />
               )}
 
-              <View style={[styles.fieldRow, stackFields && styles.fieldRowStacked]}>
-                <View style={stackFields ? undefined : styles.field}>
+              {/* Tarihler her ekran boyutunda yan yana: aralık ancak ikisi bir
+                  arada görününce okunuyor, alt alta olunca bağ kopuyordu */}
+              <View style={[styles.fieldRow, compact && styles.fieldRowTight]}>
+                <View style={styles.field}>
                   <ThemedText style={[styles.label, { color: colors.textMuted }]}>
                     Başlangıç
                   </ThemedText>
@@ -399,7 +412,7 @@ export default function LeaveRequestsScreen() {
                     borderColor={colors.border}
                   />
                 </View>
-                <View style={stackFields ? undefined : styles.field}>
+                <View style={styles.field}>
                   <ThemedText style={[styles.label, { color: colors.textMuted }]}>
                     Bitiş
                   </ThemedText>
@@ -445,9 +458,9 @@ export default function LeaveRequestsScreen() {
                 />
               )}
             </View>
+          </Card>
 
-            {divider}
-
+          <Card style={compact ? styles.cardCompact : undefined}>
             {/* ── Detaylar ───────────────────────────────────── */}
             <View style={styles.section}>
               <SectionHeader
@@ -493,12 +506,15 @@ export default function LeaveRequestsScreen() {
                 </View>
               </View>
 
-              {/* Üstteki iki alanın toplam genişliği boyunca uzanır */}
+              {/* Üstteki iki alanın toplam genişliği boyunca uzanır.
+                  Telefonda kutu yüksekliği de diğer ikisiyle eşitleniyor —
+                  tek satırlık alan kısa kalınca bölüm dağınık duruyordu. */}
               <View>
                 <LabeledInput
                   label="Acil durum iletişim"
                   placeholder="05XX XXX XX XX"
                   keyboardType="phone-pad"
+                  style={compact ? styles.compactBox : undefined}
                   maxLength={LIMITS.emergencyContact}
                   value={emergencyContact}
                   error={fieldErrors.emergencyContact}
@@ -520,22 +536,28 @@ export default function LeaveRequestsScreen() {
                 />
               </View>
             </View>
+          </Card>
 
-            {divider}
+          {/* ── Aksiyon satırı ───────────────────────────────── */}
+          <Card style={compact ? styles.cardCompact : undefined}>
+            <View style={[styles.formFooter, stackFields && styles.formFooterStacked]}>
+              <View style={styles.footerSummary}>
+                <ThemedText style={[styles.footerSummaryLabel, { color: colors.textMuted }]}>
+                  Talep özeti
+                </ThemedText>
+                <ThemedText style={[styles.footerSummaryValue, { color: colors.text }]}>
+                  {leaveTypeEmoji(selectedType)} {selectedType} · {netDays} gün
+                </ThemedText>
+              </View>
 
-            {/* ── Aksiyon satırı ─────────────────────────────── */}
-            <View style={styles.section}>
-              <View style={[styles.formFooter, stackFields && styles.formFooterStacked]}>
-                <View style={styles.footerSummary}>
-                  <ThemedText style={[styles.footerSummaryLabel, { color: colors.textMuted }]}>
-                    Talep özeti
-                  </ThemedText>
-                  <ThemedText style={[styles.footerSummaryValue, { color: colors.text }]}>
-                    {leaveTypeEmoji(selectedType)} {selectedType} · {netDays} gün
-                  </ThemedText>
+              {compact ? (
+                // Telefonda yan yana iki düğme dar kalıyor — asıl eylem üstte,
+                // tam genişlikte; temizle altında ikincil olarak duruyor
+                <View style={styles.footerActionsStacked}>
+                  <Button label="Talebi Gönder" onPress={handleSubmit} />
+                  <Button label="Formu Temizle" onPress={resetForm} variant="ghost" />
                 </View>
-
-                {/* Dar ekranda özet üste geçer ama butonlar yan yana kalır */}
+              ) : (
                 <View style={styles.footerActions}>
                   <View style={stackFields ? styles.footerButtonFlex : styles.footerButton}>
                     <Button label="Formu Temizle" onPress={resetForm} variant="ghost" />
@@ -544,7 +566,7 @@ export default function LeaveRequestsScreen() {
                     <Button label="Talebi Gönder" onPress={handleSubmit} />
                   </View>
                 </View>
-              </View>
+              )}
             </View>
           </Card>
         </ScrollView>
@@ -554,7 +576,7 @@ export default function LeaveRequestsScreen() {
           keyExtractor={(item) => item.id}
           renderItem={({ item, index }) => <MyRequestCard item={item} index={index} />}
           style={styles.flex}
-          contentContainerStyle={styles.listContent}
+          contentContainerStyle={[styles.listContent, compact && styles.contentCompact]}
           ListEmptyComponent={
             <EmptyState
               icon="calendar"
@@ -588,6 +610,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
+  /* ── Telefon ölçüleri ───────────────────────────────────── */
+  // Kenar boşlukları 24 → 16: alanlara her yandan 8px yer açılıyor
+  headerWrapCompact: {
+    paddingHorizontal: Space.lg,
+    paddingTop: Space.lg,
+    gap: Space.sm,
+  },
+  contentCompact: {
+    paddingHorizontal: Space.lg,
+  },
+  cardCompact: {
+    padding: Space.lg,
+  },
+
   /* ── Form ───────────────────────────────────────────────── */
   formContent: {
     width: '100%',
@@ -596,15 +632,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.xl,
     paddingTop: Space.xs,
     paddingBottom: Space.xl,
+    gap: Space.md,
   },
   section: {
     gap: Space.sm,
-  },
-  // Kartın iki yakasına uzanan ayıraç (kart dolgusunu negatifle telafi eder)
-  divider: {
-    height: 1,
-    marginHorizontal: -Space.xl,
-    marginVertical: Space.sm,
   },
   label: {
     fontSize: 13,
@@ -619,6 +650,13 @@ const styles = StyleSheet.create({
   fieldRowStacked: {
     flexDirection: 'column',
     gap: Space.sm,
+    // fieldRow'daki flex-start satır düzeni için; kolona dönünce ezilmezse
+    // alanlar tam genişliğe uzamayıp içerikleri kadar daralıyor
+    alignItems: 'stretch',
+  },
+  // Telefonda yan yana duran alanlara aradan biraz daha yer açar
+  fieldRowTight: {
+    gap: Space.sm,
   },
   // flex:1 (RN'de flexBasis:0) iki kolonu içerikten bağımsız eşit böler
   field: {
@@ -629,6 +667,12 @@ const styles = StyleSheet.create({
     minHeight: 72,
     textAlignVertical: 'top',
   },
+  // Tek satırlık alanı çok satırlılarla aynı yükseklikte tutar; metin
+  // ortada kalsın diye hizalama açıkça veriliyor (Android varsayılanı üst)
+  compactBox: {
+    minHeight: 72,
+    textAlignVertical: 'center',
+  },
 
   /* ── İzin türü çipleri ──────────────────────────────────── */
   chipRow: {
@@ -638,7 +682,9 @@ const styles = StyleSheet.create({
   },
   chip: {
     flex: 1,
-    minWidth: 140,
+    // 120: küçük telefonlarda (320px) da 2'şerli ızgara bozulmasın diye.
+    // flex:1 olduğu için geniş ekranda çipler yine satırı doldurup büyüyor.
+    minWidth: 120,
     alignItems: 'center',
     borderWidth: 1,
     borderRadius: Radius.pill,
@@ -695,6 +741,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: Space.md,
   },
+  footerActionsStacked: {
+    gap: Space.sm,
+  },
   footerButton: {
     width: 168,
   },
@@ -749,10 +798,13 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.md,
     paddingVertical: 5,
     borderRadius: Radius.pill,
+    // Uzun durum etiketi kartı zorlamak yerine rozeti daraltsın
+    flexShrink: 1,
   },
   statusBadgeText: {
     fontSize: 12,
     fontWeight: '700',
+    flexShrink: 1,
   },
   myCardDates: {
     flexDirection: 'row',
