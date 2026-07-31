@@ -9,9 +9,11 @@ import {
   ScrollView,
   StyleSheet,
   TextInput,
+  useWindowDimensions,
   View,
 } from 'react-native';
 import Animated, {
+  FadeIn,
   FadeInDown,
   FadeOutUp,
   LinearTransition,
@@ -67,6 +69,13 @@ const MAX_REJECT_REASON = 300;
 const DESCRIPTION_CLAMP = 110;
 
 const PRESS_SPRING = { damping: 15, stiffness: 300 };
+
+/**
+ * Bu genişlikten itibaren ekran "solda liste / sağda detay" konsoluna döner.
+ * Altında mobildeki tek kolon kart listesi görünür.
+ */
+const SPLIT_MIN_WIDTH = 1000;
+const LIST_PANE_WIDTH = 380;
 
 // ─── Helpers ──────────────────────────────────────────────────────
 type Tab = 'pending' | 'history';
@@ -567,18 +576,289 @@ function ProcessedCard({ item, index }: { item: LeaveRequest; index: number }) {
   );
 }
 
+// ─── Geniş ekran: liste satırı + detay paneli ─────────────────────
+
+/** Sol paneldeki dar liste satırı — tek bakışta kim, ne, ne zaman, kaç gün */
+function RequestRow({
+  item,
+  index,
+  active,
+  selected,
+  selectable,
+  onPress,
+  onToggleSelect,
+}: {
+  item: LeaveRequest;
+  index: number;
+  active: boolean;
+  selected: boolean;
+  selectable: boolean;
+  onPress: () => void;
+  onToggleSelect: (id: string) => void;
+}) {
+  const { colors } = useDesign();
+  const [hovered, setHovered] = useState(false);
+  const meta = statusMeta(item.status);
+
+  return (
+    <Animated.View
+      entering={cardEntering(index)}
+      exiting={FadeOutUp.duration(160)}
+      layout={LinearTransition.springify().damping(18)}>
+      <Pressable
+        onPress={onPress}
+        onHoverIn={() => setHovered(true)}
+        onHoverOut={() => setHovered(false)}
+        accessibilityRole="button"
+        accessibilityState={{ selected: active }}
+        style={[
+          styles.row,
+          {
+            backgroundColor: active
+              ? colors.primarySoft
+              : hovered
+                ? colors.surfaceRaised
+                : colors.surface,
+            borderColor: active ? colors.primary : colors.border,
+          },
+        ]}>
+        <View style={[styles.rowStripe, { backgroundColor: meta.color }]} />
+
+        {selectable && (
+          <Checkbox
+            checked={selected}
+            label={`${item.firstName} ${item.lastName} talebini seç`}
+            onToggle={() => onToggleSelect(item.id)}
+          />
+        )}
+
+        <Avatar firstName={item.firstName} lastName={item.lastName} size={32} />
+
+        <View style={styles.grow}>
+          <ThemedText style={[styles.rowName, { color: colors.text }]} numberOfLines={1}>
+            {item.firstName} {item.lastName}
+          </ThemedText>
+          <ThemedText style={[styles.rowMeta, { color: colors.textMuted }]} numberOfLines={1}>
+            {leaveTypeEmoji(item.leaveType)} {item.leaveType} · {item.startDate}
+          </ThemedText>
+        </View>
+
+        <View style={[styles.rowDays, { backgroundColor: colors.primarySoft }]}>
+          <ThemedText style={[styles.rowDaysText, { color: colors.primary }]}>
+            {item.netDays}g
+          </ThemedText>
+        </View>
+      </Pressable>
+    </Animated.View>
+  );
+}
+
+/**
+ * Sağdaki detay paneli — seçili talebin tüm bilgisi.
+ * Aksiyon şeridi kaydırma alanının DIŞINDA, panelin dibine sabit: uzun
+ * açıklamalarda bile "Onayla/Reddet" hep göz önünde kalır.
+ */
+function DetailPanel({
+  item,
+  balance,
+  overlaps,
+  onApprove,
+  onReject,
+  onEdit,
+  onCancel,
+}: {
+  item: LeaveRequest;
+  balance: LeaveBalance | null;
+  overlaps: LeaveRequest[];
+  onApprove: (item: LeaveRequest) => void;
+  onReject: (item: LeaveRequest) => void;
+  onEdit: (item: LeaveRequest) => void;
+  onCancel: (item: LeaveRequest) => void;
+}) {
+  const { colors } = useDesign();
+  const meta = statusMeta(item.status);
+  const isPending = item.status === 'PENDING';
+  const isEmergency = item.status === 'AUTO_APPROVED';
+  const exceedsBalance = balance !== null && item.netDays > balance.remaining;
+
+  return (
+    <>
+      <ScrollView style={styles.grow} contentContainerStyle={styles.detailContent}>
+        <View style={styles.detailHeader}>
+          <Avatar firstName={item.firstName} lastName={item.lastName} size={56} />
+          <View style={styles.grow}>
+            <ThemedText style={[styles.detailName, { color: colors.text }]} numberOfLines={1}>
+              {item.firstName} {item.lastName}
+            </ThemedText>
+            <View style={styles.branchRow}>
+              <Feather name="map-pin" size={12} color={colors.textMuted} />
+              <ThemedText style={[styles.cardBranch, { color: colors.textMuted }]} numberOfLines={1}>
+                {item.branch}
+              </ThemedText>
+            </View>
+          </View>
+          <View style={styles.detailHeaderRight}>
+            <TypeBadge type={item.leaveType} />
+            <View style={[styles.statusBadge, { backgroundColor: `${meta.color}18` }]}>
+              <Feather name={meta.icon} size={12} color={meta.color} />
+              <ThemedText style={[styles.statusBadgeText, { color: meta.color }]}>
+                {meta.label}
+              </ThemedText>
+            </View>
+          </View>
+        </View>
+
+        {isEmergency && (
+          <View style={styles.emergencyBanner}>
+            <Feather name="alert-triangle" size={13} color="#FFFFFF" />
+            <ThemedText style={styles.emergencyBannerText}>
+              ACİL — Sistem tarafından onaylandı
+            </ThemedText>
+          </View>
+        )}
+
+        {item.createdByAdmin === true && !isEmergency && (
+          <View style={[styles.adminBadge, { backgroundColor: colors.primarySoft }]}>
+            <Feather name="user-check" size={11} color={colors.primary} />
+            <ThemedText style={[styles.adminBadgeText, { color: colors.primary }]}>
+              Admin tarafından oluşturuldu
+            </ThemedText>
+          </View>
+        )}
+
+        {item.updatedAt && <UpdatedBadge at={item.updatedAt} />}
+
+        <View
+          style={[
+            styles.detailDateBox,
+            { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+          ]}>
+          <View>
+            <ThemedText style={[styles.dateLabel, { color: colors.textFaint }]}>
+              Başlangıç
+            </ThemedText>
+            <ThemedText style={[styles.detailDateValue, { color: colors.text }]}>
+              {item.startDate}
+            </ThemedText>
+          </View>
+          <Feather name="arrow-right" size={18} color={colors.textFaint} />
+          <View>
+            <ThemedText style={[styles.dateLabel, { color: colors.textFaint }]}>Bitiş</ThemedText>
+            <ThemedText style={[styles.detailDateValue, { color: colors.text }]}>
+              {item.endDate}
+            </ThemedText>
+          </View>
+          <View style={styles.grow} />
+          <View style={[styles.detailDayPill, { backgroundColor: colors.primarySoft }]}>
+            <ThemedText style={[styles.detailDayPillText, { color: colors.primary }]}>
+              {item.netDays} gün
+            </ThemedText>
+          </View>
+        </View>
+
+        {balance && <BalanceBar balance={balance} label="Yıllık izin bakiyesi" />}
+
+        {exceedsBalance && (
+          <Notice
+            icon="alert-triangle"
+            color={colors.danger}
+            text={`Bu talep kalan bakiyeyi ${item.netDays - balance.remaining} gün aşıyor.`}
+          />
+        )}
+
+        {overlaps.length > 0 && (
+          <Notice
+            icon="users"
+            color={colors.warning}
+            text={`Aynı tarihlerde ${item.branch} şubesinden ${overlaps.length} kişi daha izinli.`}
+          />
+        )}
+
+        <View>
+          <ThemedText style={[styles.detailBlockLabel, { color: colors.textFaint }]}>
+            Açıklama
+          </ThemedText>
+          <ThemedText style={[styles.detailDescription, { color: colors.textMuted }]}>
+            {item.description}
+          </ThemedText>
+        </View>
+
+        {item.status === 'REJECTED' && item.rejectionReason && (
+          <View style={[styles.rejectionBox, { backgroundColor: `${Palette.danger}12` }]}>
+            <ThemedText style={[styles.rejectionLabel, { color: Palette.danger }]}>
+              Ret nedeni
+            </ThemedText>
+            <ThemedText style={[styles.rejectionText, { color: colors.textMuted }]}>
+              {item.rejectionReason}
+            </ThemedText>
+          </View>
+        )}
+
+        {item.processedAt && (
+          <ThemedText style={[styles.processedAt, { color: colors.textFaint }]}>
+            İşlem tarihi: {item.processedAt}
+          </ThemedText>
+        )}
+      </ScrollView>
+
+      {isPending && (
+        <View style={[styles.detailActions, { borderTopColor: colors.border }]}>
+          <View style={styles.detailActionMain}>
+            <ActionButton
+              icon="check"
+              label="Onayla"
+              tone={colors.success}
+              tonePressed={colors.successPressed}
+              filled
+              onPress={() => onApprove(item)}
+            />
+            <ActionButton
+              icon="x"
+              label="Reddet"
+              tone={colors.danger}
+              tonePressed={colors.dangerPressed}
+              filled={false}
+              onPress={() => onReject(item)}
+            />
+          </View>
+          <View style={styles.detailActionSide}>
+            <IconButton
+              icon="edit-2"
+              label="İzni düzenle"
+              tone={colors.primary}
+              onPress={() => onEdit(item)}
+            />
+            <IconButton
+              icon="slash"
+              label="İzni iptal et"
+              tone={colors.canceled}
+              onPress={() => onCancel(item)}
+            />
+          </View>
+        </View>
+      )}
+    </>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────
 export default function LeaveApprovalScreen() {
   const { colors } = useDesign();
+  const { width } = useWindowDimensions();
+  /** Geniş ekranda liste + detay paneli, dar ekranda tek kolon kart listesi */
+  const split = width >= SPLIT_MIN_WIDTH;
 
   const [activeTab, setActiveTab] = useState<Tab>('pending');
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('ALL');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  /** Detay panelinde açık olan talep — yalnızca geniş ekranda kullanılır */
+  const [focusedId, setFocusedId] = useState<string | null>(null);
 
   const selectTab = (tab: Tab) => {
     setActiveTab(tab);
     setSelectedIds([]);
+    setFocusedId(null);
   };
 
   // 🔒 Auth store'dan login olan kullanıcı bilgisi
@@ -628,6 +908,16 @@ export default function LeaveApprovalScreen() {
   }, [activeTab, pendingList, processedList, searchQuery, statusFilter]);
 
   const isFiltering = searchQuery.trim().length > 0 || (activeTab === 'history' && statusFilter !== 'ALL');
+
+  /**
+   * Detayı açık talep. Onay/ret sonrası kayıt listeden düştüğü için seçim
+   * kendiliğinden listenin ilk kaydına kayar — panel hiç boş kalmaz ve
+   * bunun için ayrı bir effect'e gerek olmaz.
+   */
+  const focusedItem = useMemo(
+    () => visibleList.find((r) => r.id === focusedId) ?? visibleList[0] ?? null,
+    [visibleList, focusedId],
+  );
 
   /** Şubenin yıllık izin hakkı — tanımsızsa sistem varsayılanı */
   const entitlementFor = (branchName: string): number =>
@@ -785,16 +1075,33 @@ export default function LeaveApprovalScreen() {
     });
   };
 
-  const renderItem = ({ item, index }: { item: LeaveRequest; index: number }) =>
-    activeTab === 'pending' ? (
+  /** Bakiye şeridi yalnızca yıllık izinlerde — diğer türler bakiyeden yemez */
+  const balanceFor = (item: LeaveRequest): LeaveBalance | null =>
+    item.leaveType === 'Yıllık'
+      ? calculateLeaveBalance(allRequests, item, entitlementFor(item.branch))
+      : null;
+
+  const renderItem = ({ item, index }: { item: LeaveRequest; index: number }) => {
+    // Geniş ekranda liste yalnızca "seçici"dir; tüm detay sağ panelde
+    if (split) {
+      return (
+        <RequestRow
+          item={item}
+          index={index}
+          active={focusedItem?.id === item.id}
+          selected={selectedIds.includes(item.id)}
+          selectable={activeTab === 'pending'}
+          onPress={() => setFocusedId(item.id)}
+          onToggleSelect={toggleSelect}
+        />
+      );
+    }
+
+    return activeTab === 'pending' ? (
       <PendingCard
         item={item}
         index={index}
-        balance={
-          item.leaveType === 'Yıllık'
-            ? calculateLeaveBalance(allRequests, item, entitlementFor(item.branch))
-            : null
-        }
+        balance={balanceFor(item)}
         overlaps={findOverlappingLeaves(allRequests, item)}
         selected={selectedIds.includes(item.id)}
         onToggleSelect={toggleSelect}
@@ -806,6 +1113,7 @@ export default function LeaveApprovalScreen() {
     ) : (
       <ProcessedCard item={item} index={index} />
     );
+  };
 
   /**
    * Arama ve filtre listeyle birlikte kaysın diye ListHeaderComponent'te.
@@ -869,8 +1177,148 @@ export default function LeaveApprovalScreen() {
     </View>
   );
 
-  return (
-    <Screen scroll={false}>
+  const summaryStats = (
+    <>
+      <StatChip icon="clock" label="Bekleyen" value={stats.pending} color={Palette.warning} />
+      <StatChip
+        icon="check-circle"
+        label="Onaylanan"
+        value={stats.approved}
+        color={Palette.success}
+      />
+      <StatChip icon="x-circle" label="Reddedilen" value={stats.rejected} color={Palette.danger} />
+    </>
+  );
+
+  const tabsBar = (
+    <SegmentedTabs
+      tabs={[
+        { key: 'pending', label: 'Bekleyen Talepler', badge: pendingList.length },
+        { key: 'history', label: 'İşlem Görenler', badge: processedList.length },
+      ]}
+      value={activeTab}
+      onChange={selectTab}
+    />
+  );
+
+  /** Toplu işlem şeridi — sadece seçim varken görünür */
+  const bulkBar =
+    activeTab === 'pending' && selectedIds.length > 0 ? (
+      <Animated.View
+        entering={FadeInDown.duration(200)}
+        exiting={FadeOutUp.duration(160)}
+        style={[
+          styles.selectionBar,
+          { backgroundColor: colors.primarySoft, borderColor: colors.primary },
+        ]}>
+        <ThemedText style={[styles.selectionText, { color: colors.primary }]}>
+          {selectedIds.length} talep seçildi
+        </ThemedText>
+        <Pressable
+          onPress={() => setSelectedIds([])}
+          accessibilityRole="button"
+          hitSlop={8}
+          style={styles.selectionClear}>
+          <ThemedText style={[styles.selectionClearText, { color: colors.textMuted }]}>
+            Temizle
+          </ThemedText>
+        </Pressable>
+        <Pressable
+          onPress={approveSelected}
+          accessibilityRole="button"
+          style={({ pressed }) => [
+            styles.selectionApprove,
+            { backgroundColor: pressed ? colors.successPressed : colors.success },
+          ]}>
+          <Feather name="check" size={14} color="#fff" />
+          <ThemedText style={styles.selectionApproveText}>Onayla</ThemedText>
+        </Pressable>
+      </Animated.View>
+    ) : null;
+
+  const emptyState = isFiltering ? (
+    <EmptyState
+      icon="search"
+      title="Sonuç bulunamadı"
+      description="Arama veya filtre koşullarını değiştirip tekrar dene."
+    />
+  ) : activeTab === 'pending' ? (
+    <EmptyState
+      icon="check-circle"
+      title="Bekleyen talep yok"
+      description="Tüm izin talepleri işlendi. Yeni bir talep geldiğinde burada görünecek."
+    />
+  ) : (
+    <EmptyState
+      icon="inbox"
+      title="Geçmiş henüz boş"
+      description="Onayladığın, reddettiğin veya iptal ettiğin talepler burada listelenir."
+    />
+  );
+
+  // ── Geniş ekran: solda seçici liste, sağda detay paneli ────────
+  const wideLayout = (
+    <View style={styles.page}>
+      <View style={styles.pageHeader}>
+        <View style={[styles.titleBlock, styles.grow]}>
+          <ThemedText type="title">İzin Onay Yönetimi</ThemedText>
+          <ThemedText style={[styles.pageSubtitle, { color: colors.textMuted }]}>
+            Soldan bir talep seç, sağdaki panelden onayla, reddet veya düzenle.
+          </ThemedText>
+        </View>
+        <View style={[styles.statRow, styles.headerStats]}>{summaryStats}</View>
+      </View>
+
+      <View style={styles.split}>
+        <View style={styles.listPane}>
+          {tabsBar}
+          {listHeader}
+          {bulkBar}
+          <FlatList
+            data={visibleList}
+            keyExtractor={(item) => item.id}
+            renderItem={renderItem}
+            style={styles.grow}
+            contentContainerStyle={styles.rowListContent}
+            showsVerticalScrollIndicator
+            keyboardShouldPersistTaps="handled"
+            ListEmptyComponent={emptyState}
+          />
+        </View>
+
+        <View
+          style={[
+            styles.detailPane,
+            { backgroundColor: colors.surface, borderColor: colors.border },
+            Shadow.card,
+          ]}>
+          {focusedItem ? (
+            // key: talep değişince panel baştan kurulur, kaydırma tepeye döner
+            <Animated.View
+              key={focusedItem.id}
+              entering={FadeIn.duration(180)}
+              style={styles.grow}>
+              <DetailPanel
+                item={focusedItem}
+                balance={balanceFor(focusedItem)}
+                overlaps={findOverlappingLeaves(allRequests, focusedItem)}
+                onApprove={handleApprove}
+                onReject={openRejectModal}
+                onEdit={openEditModal}
+                onCancel={handleCancel}
+              />
+            </Animated.View>
+          ) : (
+            <View style={styles.detailEmpty}>{emptyState}</View>
+          )}
+        </View>
+      </View>
+    </View>
+  );
+
+  // ── Dar ekran: mevcut tek kolon kart listesi ───────────────────
+  const narrowLayout = (
+    <>
       <View style={styles.headerWrap}>
         <View style={styles.titleBlock}>
           <ThemedText type="title">İzin Onay Yönetimi</ThemedText>
@@ -880,64 +1328,11 @@ export default function LeaveApprovalScreen() {
         </View>
 
         {/* Özet şeridi */}
-        <View style={styles.statRow}>
-          <StatChip icon="clock" label="Bekleyen" value={stats.pending} color={Palette.warning} />
-          <StatChip
-            icon="check-circle"
-            label="Onaylanan"
-            value={stats.approved}
-            color={Palette.success}
-          />
-          <StatChip
-            icon="x-circle"
-            label="Reddedilen"
-            value={stats.rejected}
-            color={Palette.danger}
-          />
-        </View>
+        <View style={styles.statRow}>{summaryStats}</View>
 
-        <SegmentedTabs
-          tabs={[
-            { key: 'pending', label: 'Bekleyen Talepler', badge: pendingList.length },
-            { key: 'history', label: 'İşlem Görenler', badge: processedList.length },
-          ]}
-          value={activeTab}
-          onChange={selectTab}
-        />
+        {tabsBar}
 
-        {/* Toplu işlem şeridi — sadece seçim varken görünür */}
-        {activeTab === 'pending' && selectedIds.length > 0 && (
-          <Animated.View
-            entering={FadeInDown.duration(200)}
-            exiting={FadeOutUp.duration(160)}
-            style={[
-              styles.selectionBar,
-              { backgroundColor: colors.primarySoft, borderColor: colors.primary },
-            ]}>
-            <ThemedText style={[styles.selectionText, { color: colors.primary }]}>
-              {selectedIds.length} talep seçildi
-            </ThemedText>
-            <Pressable
-              onPress={() => setSelectedIds([])}
-              accessibilityRole="button"
-              hitSlop={8}
-              style={styles.selectionClear}>
-              <ThemedText style={[styles.selectionClearText, { color: colors.textMuted }]}>
-                Temizle
-              </ThemedText>
-            </Pressable>
-            <Pressable
-              onPress={approveSelected}
-              accessibilityRole="button"
-              style={({ pressed }) => [
-                styles.selectionApprove,
-                { backgroundColor: pressed ? colors.successPressed : colors.success },
-              ]}>
-              <Feather name="check" size={14} color="#fff" />
-              <ThemedText style={styles.selectionApproveText}>Onayla</ThemedText>
-            </Pressable>
-          </Animated.View>
-        )}
+        {bulkBar}
       </View>
 
       {/* List */}
@@ -950,28 +1345,14 @@ export default function LeaveApprovalScreen() {
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
         ListHeaderComponent={listHeader}
-        ListEmptyComponent={
-          isFiltering ? (
-            <EmptyState
-              icon="search"
-              title="Sonuç bulunamadı"
-              description="Arama veya filtre koşullarını değiştirip tekrar dene."
-            />
-          ) : activeTab === 'pending' ? (
-            <EmptyState
-              icon="check-circle"
-              title="Bekleyen talep yok"
-              description="Tüm izin talepleri işlendi. Yeni bir talep geldiğinde burada görünecek."
-            />
-          ) : (
-            <EmptyState
-              icon="inbox"
-              title="Geçmiş henüz boş"
-              description="Onayladığın, reddettiğin veya iptal ettiğin talepler burada listelenir."
-            />
-          )
-        }
+        ListEmptyComponent={emptyState}
       />
+    </>
+  );
+
+  return (
+    <Screen scroll={false}>
+      {split ? wideLayout : narrowLayout}
 
       {/* ─── Reject Reason Modal ────────────────────────────────── */}
       <Modal
@@ -1268,6 +1649,165 @@ const styles = StyleSheet.create({
   },
   pageSubtitle: {
     fontSize: 14,
+  },
+
+  /* ── Geniş ekran düzeni (>= SPLIT_MIN_WIDTH) ─────────────────
+     Dar ekrandaki 480px'lik kolon burada bırakılıyor: sayfa ekranın
+     iki yakasına kadar açılıyor, üst sınır sadece ultra geniş
+     monitörlerde satırların okunmaz uzunlukta olmasını engelliyor. */
+  page: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 1600,
+    alignSelf: 'center',
+    paddingHorizontal: Space.xl,
+    paddingTop: Space.xl,
+    paddingBottom: Space.xl,
+    gap: Space.lg,
+  },
+  pageHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.xl,
+  },
+  // Özet kutucukları başlıkla aynı satırda, sağ tarafta
+  headerStats: {
+    width: 460,
+  },
+  split: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: Space.lg,
+  },
+  listPane: {
+    width: LIST_PANE_WIDTH,
+    gap: Space.sm,
+  },
+  rowListContent: {
+    paddingBottom: Space.lg,
+    gap: Space.sm,
+  },
+  detailPane: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: Radius.lg,
+    // Dipteki aksiyon şeridi ve kaydırma alanı yuvarlak köşeye kırpılsın
+    overflow: 'hidden',
+  },
+  detailEmpty: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+
+  /* ── Liste satırı (geniş ekran) ──────────────────────────── */
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingLeft: Space.md + 4, // sol durum şeridi payı
+    paddingRight: Space.md,
+    paddingVertical: 10,
+    overflow: 'hidden',
+  },
+  rowStripe: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: 3,
+  },
+  rowName: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  rowMeta: {
+    fontSize: 12,
+    marginTop: 1,
+  },
+  rowDays: {
+    paddingHorizontal: Space.sm,
+    paddingVertical: 3,
+    borderRadius: Radius.pill,
+  },
+  rowDaysText: {
+    fontSize: 12,
+    fontWeight: '700',
+  },
+
+  /* ── Detay paneli (geniş ekran) ──────────────────────────── */
+  detailContent: {
+    padding: Space.xl,
+    gap: Space.md,
+  },
+  detailHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.lg,
+  },
+  detailHeaderRight: {
+    alignItems: 'flex-end',
+    gap: Space.sm,
+  },
+  detailName: {
+    fontSize: 22,
+    fontWeight: '700',
+    lineHeight: 28,
+  },
+  detailDateBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: Space.xl,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.xl,
+    paddingVertical: Space.lg,
+  },
+  detailDateValue: {
+    fontSize: 18,
+    fontWeight: '700',
+    lineHeight: 24,
+  },
+  detailDayPill: {
+    paddingHorizontal: Space.lg,
+    paddingVertical: 6,
+    borderRadius: Radius.pill,
+  },
+  detailDayPillText: {
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  detailBlockLabel: {
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    lineHeight: 14,
+    marginBottom: 2,
+  },
+  detailDescription: {
+    fontSize: 15,
+    lineHeight: 22,
+  },
+  // Kaydırma alanının dışında, panelin dibine sabit
+  detailActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.md,
+    borderTopWidth: 1,
+    paddingHorizontal: Space.xl,
+    paddingVertical: Space.lg,
+  },
+  detailActionMain: {
+    flex: 1,
+    flexDirection: 'row',
+    gap: Space.md,
+  },
+  detailActionSide: {
+    flexDirection: 'row',
+    gap: Space.xs,
   },
 
   // Özet şeridi
