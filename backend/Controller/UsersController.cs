@@ -28,6 +28,50 @@ namespace LeaveManagementAPI.Controller
             _logger = logger;
         }
 
+        /// <summary>Oturumdaki kullanicinin profili ve aktif is yeri atamasi.</summary>
+        [HttpGet("me")]
+        [Authorize]
+        public async Task<ActionResult<CurrentUserResponse>> Me(CancellationToken cancellationToken)
+        {
+            var userIdValue = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+            if (!long.TryParse(userIdValue, out var userId))
+            {
+                return Unauthorized(new { message = "Gecersiz token." });
+            }
+
+            var user = await _context.Users
+                .SingleOrDefaultAsync(u => u.Id == userId && u.IsActive, cancellationToken);
+            if (user is null)
+            {
+                return Unauthorized(new { message = "Gecersiz token veya pasif kullanici." });
+            }
+
+            var assignment = await _context.UserWorkplaces
+                .Where(mapping => mapping.UserId == userId && mapping.Workplace.IsActive)
+                .OrderBy(mapping => mapping.WorkplaceId)
+                .Select(mapping => new
+                {
+                    mapping.WorkplaceId,
+                    WorkplaceName = mapping.Workplace.Name,
+                    mapping.AnnualLeaveCount
+                })
+                .FirstOrDefaultAsync(cancellationToken);
+
+            return Ok(new CurrentUserResponse
+            {
+                Id = user.Id,
+                Mail = user.Mail,
+                Phone = user.Phone,
+                Name = user.Name,
+                Surname = user.Surname,
+                Role = user.Role.ToString(),
+                IsFirstLogin = user.IsTempPassword,
+                WorkplaceId = assignment?.WorkplaceId,
+                WorkplaceName = assignment?.WorkplaceName,
+                AnnualLeaveCount = assignment?.AnnualLeaveCount
+            });
+        }
+
         [HttpPost("create")]
         [Authorize(Roles = "ADMIN")]
         public async Task<ActionResult<UserResponse>> Create(CreateUserRequest request, CancellationToken cancellationToken)
@@ -96,6 +140,98 @@ namespace LeaveManagementAPI.Controller
             }
 
             return Created($"/api/users/{user.Id}", ToResponse(user));
+        }
+
+        /// <summary>Soft-delete edilmiş kullanıcılar (Silinenler ekranı).</summary>
+        [HttpGet("deleted")]
+        [Authorize(Roles = "ADMIN")]
+        public async Task<ActionResult<IEnumerable<DeletedUserResponse>>> GetDeleted(
+            CancellationToken cancellationToken)
+        {
+            var users = await _context.Users
+                .IgnoreQueryFilters()
+                .Where(user => user.DeletedAt != null && user.Role != UserRole.ADMIN)
+                .OrderByDescending(user => user.DeletedAt)
+                .Select(user => new DeletedUserResponse
+                {
+                    Id = user.Id,
+                    Mail = user.Mail,
+                    Name = user.Name,
+                    Surname = user.Surname,
+                    Role = user.Role.ToString(),
+                    DeletedAt = user.DeletedAt!.Value,
+                    WorkplaceId = user.UserWorkplaces
+                        .Select(mapping => (long?)mapping.WorkplaceId)
+                        .FirstOrDefault(),
+                    WorkplaceName = user.UserWorkplaces
+                        .Select(mapping => mapping.Workplace.Name)
+                        .FirstOrDefault()
+                })
+                .ToListAsync(cancellationToken);
+
+            return Ok(users);
+        }
+
+        /// <summary>
+        /// Kullanıcıyı soft-delete eder (fiziksel DELETE yasak — şartname 4.1).
+        /// Şube ataması korunur; geri alındığında aynı şubesine döner.
+        /// </summary>
+        [HttpDelete("{id:long}")]
+        [Authorize(Roles = "ADMIN")]
+        public async Task<IActionResult> Delete(long id, CancellationToken cancellationToken)
+        {
+            var currentUserId = User.FindFirst(System.IdentityModel.Tokens.Jwt.JwtRegisteredClaimNames.Sub)?.Value;
+            if (!long.TryParse(currentUserId, out var adminId))
+            {
+                return Unauthorized(new { message = "Gecersiz token." });
+            }
+
+            if (id == adminId)
+            {
+                return BadRequest(new { message = "Kendi hesabinizi silemezsiniz." });
+            }
+
+            var user = await _context.Users.SingleOrDefaultAsync(u => u.Id == id, cancellationToken);
+            if (user is null)
+            {
+                return NotFound(new { message = "Kullanici bulunamadi." });
+            }
+
+            if (user.Role == UserRole.ADMIN)
+            {
+                return BadRequest(new { message = "Yonetici hesabi bu endpoint ile silinemez." });
+            }
+
+            user.DeletedAt = DateTime.UtcNow;
+            user.IsActive = false;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return NoContent();
+        }
+
+        /// <summary>Soft-delete edilmiş kullanıcıyı geri alır.</summary>
+        [HttpPost("{id:long}/restore")]
+        [Authorize(Roles = "ADMIN")]
+        public async Task<ActionResult<UserResponse>> Restore(long id, CancellationToken cancellationToken)
+        {
+            var user = await _context.Users
+                .IgnoreQueryFilters()
+                .SingleOrDefaultAsync(u => u.Id == id, cancellationToken);
+            if (user is null)
+            {
+                return NotFound(new { message = "Kullanici bulunamadi." });
+            }
+
+            if (user.DeletedAt is null)
+            {
+                return BadRequest(new { message = "Kullanici silinmis durumda degil." });
+            }
+
+            user.DeletedAt = null;
+            user.IsActive = true;
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return Ok(ToResponse(user));
         }
 
         [HttpPatch("{id:long}/status")]

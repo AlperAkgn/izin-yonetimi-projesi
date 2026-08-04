@@ -1,11 +1,13 @@
 import Feather from '@expo/vector-icons/Feather';
-import { useMemo, useState } from 'react';
+import { useFocusEffect } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   TextInput,
@@ -22,7 +24,6 @@ import Animated, {
   withSpring,
 } from 'react-native-reanimated';
 
-import { DateField } from '@/components/date-field';
 import { ThemedText } from '@/components/themed-text';
 import { Avatar } from '@/components/ui/avatar';
 import { BalanceBar } from '@/components/ui/balance-bar';
@@ -32,11 +33,8 @@ import { Notice } from '@/components/ui/notice';
 import { Screen } from '@/components/ui/screen';
 import { SegmentedTabs } from '@/components/ui/segmented-tabs';
 import { Palette, Radius, Shadow, Space } from '@/constants/design';
-import { LEAVE_TYPES, leaveTypeEmoji, statusMeta } from '@/constants/leave';
+import { leaveTypeEmoji, statusMeta } from '@/constants/leave';
 import { useDesign } from '@/hooks/use-design';
-import { DEFAULT_LEAVE_DAYS } from '@/services/branches';
-import { useAuthStore } from '@/store/authStore';
-import { useBranchesStore } from '@/store/branchesStore';
 import {
   calculateLeaveBalance,
   filterPendingRequests,
@@ -45,7 +43,6 @@ import {
   useLeaveRequestsStore,
 } from '@/store/leaveRequestsStore';
 import { showToast } from '@/store/toastStore';
-import { countNetWeekdays, formatDate, parseDate } from '@/utils/date';
 
 import type { FeatherName } from '@/components/ui/icon';
 import type { LeaveBalance, LeaveRequest, LeaveType } from '@/store/leaveRequestsStore';
@@ -110,37 +107,6 @@ function matchesStatusFilter(request: LeaveRequest, filter: StatusFilter): boole
 }
 
 // ─── Küçük parçalar ───────────────────────────────────────────────
-
-/** Kart başlığındaki 44px'lik ikon düğmesi — basma ve (web'de) hover geri bildirimi */
-function IconButton({
-  icon,
-  label,
-  tone,
-  onPress,
-}: {
-  icon: FeatherName;
-  label: string;
-  tone: string;
-  onPress: () => void;
-}) {
-  const [hovered, setHovered] = useState(false);
-
-  return (
-    <Pressable
-      onPress={onPress}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [
-        styles.iconBtn,
-        // Aynı rengin üç yoğunluğu: boşta / hover / basılı
-        { backgroundColor: `${tone}${pressed ? '33' : hovered ? '24' : '14'}` },
-      ]}>
-      <Feather name={icon} size={17} color={tone} />
-    </Pressable>
-  );
-}
 
 /** Onayla/Reddet düğmesi — dolu (birincil) veya çerçeveli (ikincil) */
 function ActionButton({
@@ -323,19 +289,6 @@ function ExpandableText({ text }: { text: string }) {
   );
 }
 
-function UpdatedBadge({ at }: { at: string }) {
-  const { colors } = useDesign();
-
-  return (
-    <View style={[styles.updatedBadge, { backgroundColor: colors.primarySoft }]}>
-      <Feather name="edit-3" size={11} color={colors.primary} />
-      <ThemedText style={[styles.updatedBadgeText, { color: colors.primary }]}>
-        Güncellendi — {at}
-      </ThemedText>
-    </View>
-  );
-}
-
 /** Kartın üst satırı: (seçim kutusu) + avatar + isim/şube + sağdaki içerik */
 function CardHeader({
   item,
@@ -398,8 +351,6 @@ function PendingCard({
   onToggleSelect,
   onApprove,
   onReject,
-  onEdit,
-  onCancel,
 }: {
   item: LeaveRequest;
   index: number;
@@ -409,8 +360,6 @@ function PendingCard({
   onToggleSelect: (id: string) => void;
   onApprove: (item: LeaveRequest) => void;
   onReject: (item: LeaveRequest) => void;
-  onEdit: (item: LeaveRequest) => void;
-  onCancel: (item: LeaveRequest) => void;
 }) {
   const { colors } = useDesign();
   const exceedsBalance = balance !== null && item.netDays > balance.remaining;
@@ -430,8 +379,6 @@ function PendingCard({
       ]}>
       <View style={[styles.statusStripe, { backgroundColor: Palette.warning }]} />
 
-      {item.updatedAt && <UpdatedBadge at={item.updatedAt} />}
-
       <CardHeader
         item={item}
         leading={
@@ -441,23 +388,9 @@ function PendingCard({
             onToggle={() => onToggleSelect(item.id)}
           />
         }>
-        <View style={styles.cardHeaderActions}>
-          <IconButton
-            icon="edit-2"
-            label="İzni düzenle"
-            tone={colors.primary}
-            onPress={() => onEdit(item)}
-          />
-          <IconButton
-            icon="slash"
-            label="İzni iptal et"
-            tone={colors.canceled}
-            onPress={() => onCancel(item)}
-          />
-        </View>
+        <TypeBadge type={item.leaveType} />
       </CardHeader>
 
-      <TypeBadge type={item.leaveType} />
       <DateRangeBox item={item} />
 
       {balance && <BalanceBar balance={balance} label="Yıllık izin bakiyesi" />}
@@ -538,8 +471,6 @@ function ProcessedCard({ item, index }: { item: LeaveRequest; index: number }) {
           </ThemedText>
         </View>
       )}
-
-      {item.updatedAt && <UpdatedBadge at={item.updatedAt} />}
 
       <CardHeader item={item}>
         <TypeBadge type={item.leaveType} />
@@ -664,16 +595,12 @@ function DetailPanel({
   overlaps,
   onApprove,
   onReject,
-  onEdit,
-  onCancel,
 }: {
   item: LeaveRequest;
   balance: LeaveBalance | null;
   overlaps: LeaveRequest[];
   onApprove: (item: LeaveRequest) => void;
   onReject: (item: LeaveRequest) => void;
-  onEdit: (item: LeaveRequest) => void;
-  onCancel: (item: LeaveRequest) => void;
 }) {
   const { colors } = useDesign();
   const meta = statusMeta(item.status);
@@ -725,8 +652,6 @@ function DetailPanel({
             </ThemedText>
           </View>
         )}
-
-        {item.updatedAt && <UpdatedBadge at={item.updatedAt} />}
 
         <View
           style={[
@@ -821,20 +746,6 @@ function DetailPanel({
               onPress={() => onReject(item)}
             />
           </View>
-          <View style={styles.detailActionSide}>
-            <IconButton
-              icon="edit-2"
-              label="İzni düzenle"
-              tone={colors.primary}
-              onPress={() => onEdit(item)}
-            />
-            <IconButton
-              icon="slash"
-              label="İzni iptal et"
-              tone={colors.canceled}
-              onPress={() => onCancel(item)}
-            />
-          </View>
         </View>
       )}
     </>
@@ -861,30 +772,25 @@ export default function LeaveApprovalScreen() {
     setFocusedId(null);
   };
 
-  // 🔒 Auth store'dan login olan kullanıcı bilgisi
-  const authUser = useAuthStore((s) => s.user);
-  const userRole = authUser?.role ?? 'ADMIN';
-  const userBranch = authUser?.branchName ?? null;
-
-  // Store'dan oku
-  const allRequests = useLeaveRequestsStore((s) => s.requests);
+  // Kapsam sunucuda uygulanır: HR kendi şubesini, admin tüm şubeleri alır
+  const allRequests = useLeaveRequestsStore((s) => s.approval);
+  const fetchApproval = useLeaveRequestsStore((s) => s.fetchApproval);
+  const loadingApproval = useLeaveRequestsStore((s) => s.loadingApproval);
+  const approvalError = useLeaveRequestsStore((s) => s.approvalError);
   const approveRequest = useLeaveRequestsStore((s) => s.approveRequest);
   const rejectRequest = useLeaveRequestsStore((s) => s.rejectRequest);
-  const cancelRequest = useLeaveRequestsStore((s) => s.cancelRequest);
-  const updateRequest = useLeaveRequestsStore((s) => s.updateRequest);
-  const restoreRequest = useLeaveRequestsStore((s) => s.restoreRequest);
-  const branches = useBranchesStore((s) => s.branches);
 
-  // Türetilmiş listeler — tek kaynak (store) üzerinden ROL BAZLI filtrelenir.
-  // Filtreler her çağrıda yeni dizi ürettiği için memoize ediyoruz.
-  const pendingList = useMemo(
-    () => filterPendingRequests(allRequests, userRole, userBranch),
-    [allRequests, userRole, userBranch],
+  // Drawer ekranı açık kaldığı için her odaklanmada tazele —
+  // yeni gelen talepler ekrana dönüşte görünsün
+  useFocusEffect(
+    useCallback(() => {
+      void fetchApproval();
+    }, [fetchApproval]),
   );
-  const processedList = useMemo(
-    () => filterProcessedRequests(allRequests, userRole, userBranch),
-    [allRequests, userRole, userBranch],
-  );
+
+  // Türetilmiş listeler — filtreler her çağrıda yeni dizi ürettiği için memoize
+  const pendingList = useMemo(() => filterPendingRequests(allRequests), [allRequests]);
+  const processedList = useMemo(() => filterProcessedRequests(allRequests), [allRequests]);
 
   const stats = useMemo(() => {
     let approved = 0;
@@ -919,46 +825,35 @@ export default function LeaveApprovalScreen() {
     [visibleList, focusedId],
   );
 
-  /** Şubenin yıllık izin hakkı — tanımsızsa sistem varsayılanı */
-  const entitlementFor = (branchName: string): number =>
-    branches.find((b) => b.name === branchName)?.defaultLeaveDays ?? DEFAULT_LEAVE_DAYS;
-
   // Reject modal state
   const [rejectModalVisible, setRejectModalVisible] = useState(false);
   const [rejectTarget, setRejectTarget] = useState<LeaveRequest | null>(null);
   const [rejectReason, setRejectReason] = useState('');
   const [rejectError, setRejectError] = useState('');
-
-  // Edit modal state
-  const [editModalVisible, setEditModalVisible] = useState(false);
-  const [editTarget, setEditTarget] = useState<LeaveRequest | null>(null);
-  const [editLeaveType, setEditLeaveType] = useState<LeaveType>('Yıllık');
-  const [editStartDate, setEditStartDate] = useState(new Date());
-  const [editEndDate, setEditEndDate] = useState(new Date());
-  const [editDescription, setEditDescription] = useState('');
-  const [editError, setEditError] = useState('');
-
-  const editNetDays = countNetWeekdays(editStartDate, editEndDate);
+  const [rejectSubmitting, setRejectSubmitting] = useState(false);
 
   // ── Actions ────────────────────────────────────────────────────
-  // Tüm işlemler iyimser: önce uygulanır, sonra "Geri al" sunulur. Native
-  // onay/bilgi kutuları (window.confirm/alert) akıştan tamamen kalktı.
+  // İşlemler sunucuda kalıcıdır; onaylanan/reddedilen talep geri alınamaz.
 
-  const handleApprove = (item: LeaveRequest) => {
-    approveRequest(item.id);
+  const handleApprove = async (item: LeaveRequest) => {
+    const result = await approveRequest(item.id);
+    if (!result.ok) {
+      showToast({ message: result.message ?? 'Talep onaylanamadı.', tone: 'danger' });
+      return;
+    }
+
+    // Backend limit aşımını onay anında yakalayıp talebi REDDEDEBİLİR
+    if (result.request?.status === 'REJECTED') {
+      showToast({
+        message: `${item.firstName} ${item.lastName} — bakiye yetersiz, talep otomatik reddedildi.`,
+        tone: 'danger',
+      });
+      return;
+    }
+
     showToast({
       message: `${item.firstName} ${item.lastName} — ${item.netDays} günlük izin onaylandı.`,
       tone: 'success',
-      action: { label: 'Geri al', onPress: () => restoreRequest(item) },
-    });
-  };
-
-  const handleCancel = (item: LeaveRequest) => {
-    cancelRequest(item.id);
-    showToast({
-      message: `${item.firstName} ${item.lastName} — izin iptal edildi.`,
-      tone: 'info',
-      action: { label: 'Geri al', onPress: () => restoreRequest(item) },
     });
   };
 
@@ -966,21 +861,25 @@ export default function LeaveApprovalScreen() {
     setSelectedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   };
 
-  const approveSelected = () => {
-    // Anlık görüntüleri işlemden ÖNCE alıyoruz ki "Geri al" hepsini geri yazabilsin
+  const approveSelected = async () => {
     const snapshots = pendingList.filter((r) => selectedIds.includes(r.id));
     if (snapshots.length === 0) return;
 
-    snapshots.forEach((r) => approveRequest(r.id));
     setSelectedIds([]);
+    let approved = 0;
+    let failed = 0;
+    for (const request of snapshots) {
+      const result = await approveRequest(request.id);
+      if (result.ok && result.request?.status !== 'REJECTED') approved += 1;
+      else failed += 1;
+    }
 
     showToast({
-      message: `${snapshots.length} talep onaylandı.`,
-      tone: 'success',
-      action: {
-        label: 'Geri al',
-        onPress: () => snapshots.forEach((r) => restoreRequest(r)),
-      },
+      message:
+        failed === 0
+          ? `${approved} talep onaylandı.`
+          : `${approved} talep onaylandı, ${failed} talep onaylanamadı.`,
+      tone: failed === 0 ? 'success' : 'danger',
     });
   };
 
@@ -1002,8 +901,8 @@ export default function LeaveApprovalScreen() {
    * Modalın kendisi onay adımıdır — üstüne bir de sistem onay kutusu açmıyoruz.
    * Doğrulama hatası da modal içinde satır olarak gösteriliyor.
    */
-  const confirmReject = () => {
-    if (!rejectTarget) return;
+  const confirmReject = async () => {
+    if (!rejectTarget || rejectSubmitting) return;
 
     const reason = rejectReason.trim();
     if (reason.length === 0) {
@@ -1012,73 +911,29 @@ export default function LeaveApprovalScreen() {
     }
 
     const snapshot = rejectTarget;
-    rejectRequest(snapshot.id, reason);
-    closeRejectModal();
+    setRejectSubmitting(true);
+    const result = await rejectRequest(snapshot.id, reason);
+    setRejectSubmitting(false);
 
+    if (!result.ok) {
+      setRejectError(result.message ?? 'Talep reddedilemedi.');
+      return;
+    }
+
+    closeRejectModal();
     showToast({
       message: `${snapshot.firstName} ${snapshot.lastName} — talep reddedildi.`,
       tone: 'danger',
-      action: { label: 'Geri al', onPress: () => restoreRequest(snapshot) },
     });
   };
 
-  // ── Edit Modal ─────────────────────────────────────────────────
-  const openEditModal = (item: LeaveRequest) => {
-    setEditTarget(item);
-    setEditLeaveType(item.leaveType);
-    // Kayıtta tarihler "GG.AA.YYYY" metni olarak duruyor; DateField Date bekliyor
-    setEditStartDate(parseDate(item.startDate) ?? new Date());
-    setEditEndDate(parseDate(item.endDate) ?? new Date());
-    setEditDescription(item.description);
-    setEditError('');
-    setEditModalVisible(true);
-  };
-
-  const closeEditModal = () => {
-    setEditModalVisible(false);
-    setEditTarget(null);
-    setEditError('');
-  };
-
-  const confirmEdit = () => {
-    if (!editTarget) return;
-
-    if (editDescription.trim().length === 0) {
-      setEditError('Açıklama boş bırakılamaz.');
-      return;
-    }
-    if (editEndDate < editStartDate) {
-      setEditError('Bitiş tarihi başlangıçtan önce olamaz.');
-      return;
-    }
-
-    const snapshot = editTarget;
-    const becomesEmergency = editLeaveType === 'Acil';
-
-    updateRequest(snapshot.id, {
-      leaveType: editLeaveType,
-      startDate: formatDate(editStartDate),
-      endDate: formatDate(editEndDate),
-      // Tarihler değiştiyse gün sayısı da değişir — eskiden güncellenmiyordu
-      netDays: editNetDays,
-      description: editDescription.trim(),
-    });
-
-    closeEditModal();
-
-    showToast({
-      message: becomesEmergency
-        ? 'İzin ACİL olarak güncellendi ve otomatik onaylandı.'
-        : 'İzin talebi güncellendi.',
-      tone: becomesEmergency ? 'danger' : 'success',
-      action: { label: 'Geri al', onPress: () => restoreRequest(snapshot) },
-    });
-  };
-
-  /** Bakiye şeridi yalnızca yıllık izinlerde — diğer türler bakiyeden yemez */
+  /**
+   * Bakiye şeridi yalnızca yıllık izinlerde gösterilir; kişinin izin hakkı
+   * sunucudan talep kaydıyla birlikte gelir (userAnnualLeaveCount).
+   */
   const balanceFor = (item: LeaveRequest): LeaveBalance | null =>
-    item.leaveType === 'Yıllık'
-      ? calculateLeaveBalance(allRequests, item, entitlementFor(item.branch))
+    item.leaveType === 'Yıllık' && item.annualLeaveCount != null
+      ? calculateLeaveBalance(allRequests, item, item.annualLeaveCount)
       : null;
 
   const renderItem = ({ item, index }: { item: LeaveRequest; index: number }) => {
@@ -1107,8 +962,6 @@ export default function LeaveApprovalScreen() {
         onToggleSelect={toggleSelect}
         onApprove={handleApprove}
         onReject={openRejectModal}
-        onEdit={openEditModal}
-        onCancel={handleCancel}
       />
     ) : (
       <ProcessedCard item={item} index={index} />
@@ -1122,6 +975,9 @@ export default function LeaveApprovalScreen() {
    */
   const listHeader = (
     <View style={styles.listHeader}>
+      {approvalError !== null && (
+        <Notice icon="alert-circle" color={colors.danger} text={approvalError} />
+      )}
       <View
         style={[
           styles.searchBox,
@@ -1282,7 +1138,10 @@ export default function LeaveApprovalScreen() {
             contentContainerStyle={styles.rowListContent}
             showsVerticalScrollIndicator
             keyboardShouldPersistTaps="handled"
-            ListEmptyComponent={emptyState}
+            refreshControl={
+              <RefreshControl refreshing={loadingApproval} onRefresh={() => void fetchApproval()} />
+            }
+            ListEmptyComponent={loadingApproval ? null : emptyState}
           />
         </View>
 
@@ -1304,8 +1163,6 @@ export default function LeaveApprovalScreen() {
                 overlaps={findOverlappingLeaves(allRequests, focusedItem)}
                 onApprove={handleApprove}
                 onReject={openRejectModal}
-                onEdit={openEditModal}
-                onCancel={handleCancel}
               />
             </Animated.View>
           ) : (
@@ -1344,8 +1201,11 @@ export default function LeaveApprovalScreen() {
         contentContainerStyle={styles.listContent}
         showsVerticalScrollIndicator={true}
         keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl refreshing={loadingApproval} onRefresh={() => void fetchApproval()} />
+        }
         ListHeaderComponent={listHeader}
-        ListEmptyComponent={emptyState}
+        ListEmptyComponent={loadingApproval ? null : emptyState}
       />
     </>
   );
@@ -1457,168 +1317,7 @@ export default function LeaveApprovalScreen() {
                 </ThemedText>
               </Pressable>
               <View style={styles.grow}>
-                <Button label="Reddet" onPress={confirmReject} />
-              </View>
-            </View>
-          </Animated.View>
-        </KeyboardAvoidingView>
-      </Modal>
-
-      {/* ─── Edit Modal ─────────────────────────────────────────── */}
-      <Modal
-        visible={editModalVisible}
-        transparent
-        animationType="fade"
-        onRequestClose={closeEditModal}>
-        <KeyboardAvoidingView
-          style={styles.modalOverlay}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
-          <Animated.View
-            entering={FadeInDown.duration(220).springify().damping(20)}
-            style={[
-              styles.modalContent,
-              { backgroundColor: colors.surface, borderColor: colors.border },
-              Shadow.card,
-            ]}>
-            <View style={styles.modalHeader}>
-              <View style={[styles.modalIcon, { backgroundColor: colors.primarySoft }]}>
-                <Feather name="edit-2" size={18} color={colors.primary} />
-              </View>
-              <View style={styles.grow}>
-                <ThemedText style={[styles.modalTitle, { color: colors.text }]}>
-                  İzni Düzenle
-                </ThemedText>
-                {editTarget && (
-                  <ThemedText style={[styles.modalSubtitle, { color: colors.textMuted }]}>
-                    {editTarget.firstName} {editTarget.lastName} — {editTarget.branch}
-                  </ThemedText>
-                )}
-              </View>
-            </View>
-
-            <ScrollView style={styles.editScroll} showsVerticalScrollIndicator={false}>
-              <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
-                İzin türü
-              </ThemedText>
-              <View style={styles.editChipRow}>
-                {LEAVE_TYPES.map((type) => {
-                  const active = editLeaveType === type;
-                  return (
-                    <Pressable
-                      key={type}
-                      onPress={() => setEditLeaveType(type)}
-                      accessibilityRole="button"
-                      style={[
-                        styles.editChip,
-                        {
-                          backgroundColor: active ? colors.primary : 'transparent',
-                          borderColor: active ? colors.primary : colors.border,
-                        },
-                      ]}>
-                      <ThemedText
-                        style={[
-                          styles.editChipText,
-                          { color: active ? '#fff' : colors.text, fontWeight: active ? '600' : '400' },
-                        ]}>
-                        {leaveTypeEmoji(type)} {type}
-                      </ThemedText>
-                    </Pressable>
-                  );
-                })}
-              </View>
-
-              <View style={styles.editDateRow}>
-                <View style={styles.grow}>
-                  <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
-                    Başlangıç
-                  </ThemedText>
-                  <DateField
-                    value={editStartDate}
-                    onChange={(date) => {
-                      setEditStartDate(date);
-                      if (editError) setEditError('');
-                    }}
-                    borderColor={colors.border}
-                  />
-                </View>
-                <View style={styles.grow}>
-                  <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
-                    Bitiş
-                  </ThemedText>
-                  <DateField
-                    value={editEndDate}
-                    minimumDate={editStartDate}
-                    onChange={(date) => {
-                      setEditEndDate(date);
-                      if (editError) setEditError('');
-                    }}
-                    borderColor={colors.border}
-                  />
-                </View>
-              </View>
-
-              <View
-                style={[
-                  styles.netDaysBox,
-                  { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
-                ]}>
-                <View style={styles.netDaysLeft}>
-                  <Feather name="clock" size={14} color={colors.textMuted} />
-                  <ThemedText style={[styles.netDaysLabel, { color: colors.textMuted }]}>
-                    Hafta sonları hariç
-                  </ThemedText>
-                </View>
-                <ThemedText style={[styles.netDaysValue, { color: colors.primary }]}>
-                  {editNetDays} gün
-                </ThemedText>
-              </View>
-
-              <ThemedText style={[styles.fieldLabel, { color: colors.textMuted }]}>
-                Açıklama
-              </ThemedText>
-              <TextInput
-                style={[
-                  styles.modalInput,
-                  {
-                    color: colors.text,
-                    backgroundColor: colors.surfaceRaised,
-                    borderColor: colors.border,
-                  },
-                ]}
-                placeholder="İzin açıklaması..."
-                placeholderTextColor={colors.textFaint}
-                multiline
-                value={editDescription}
-                onChangeText={(text) => {
-                  setEditDescription(text);
-                  if (editError) setEditError('');
-                }}
-              />
-            </ScrollView>
-
-            {editLeaveType === 'Acil' && (
-              <Notice
-                icon="alert-triangle"
-                color={colors.danger}
-                text="Acil izin seçildi — kaydedildiğinde otomatik onaylanacaktır."
-              />
-            )}
-
-            {editError !== '' && (
-              <Notice icon="alert-circle" color={colors.danger} text={editError} />
-            )}
-
-            <View style={styles.modalActions}>
-              <Pressable
-                onPress={closeEditModal}
-                accessibilityRole="button"
-                style={[styles.modalCancelBtn, { borderColor: colors.border }]}>
-                <ThemedText style={[styles.modalCancelText, { color: colors.textMuted }]}>
-                  Vazgeç
-                </ThemedText>
-              </Pressable>
-              <View style={styles.grow}>
-                <Button label="Kaydet" onPress={confirmEdit} />
+                <Button label="Reddet" onPress={confirmReject} loading={rejectSubmitting} />
               </View>
             </View>
           </Animated.View>
@@ -1804,10 +1503,6 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     gap: Space.md,
-  },
-  detailActionSide: {
-    flexDirection: 'row',
-    gap: Space.xs,
   },
 
   // Özet şeridi
@@ -2118,34 +1813,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
-  // Card header icon buttons
-  cardHeaderActions: {
-    flexDirection: 'row',
-    gap: Space.xs,
-  },
-  iconBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: Radius.sm,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  // Updated badge
-  updatedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 5,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.xs,
-    borderRadius: Radius.sm,
-    alignSelf: 'flex-start',
-  },
-  updatedBadgeText: {
-    fontSize: 11,
-    fontWeight: '700',
-  },
-
   // Rejection reason
   rejectionBox: {
     borderRadius: Radius.sm,
@@ -2250,50 +1917,5 @@ const styles = StyleSheet.create({
   presetChipText: {
     fontSize: 12,
     fontWeight: '600',
-  },
-
-  // Edit modal
-  editScroll: {
-    maxHeight: 380,
-  },
-  editChipRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: Space.sm,
-  },
-  editChip: {
-    borderWidth: 1,
-    borderRadius: Radius.pill,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.sm,
-  },
-  editChipText: {
-    fontSize: 13,
-  },
-  editDateRow: {
-    flexDirection: 'row',
-    gap: Space.md,
-  },
-  netDaysBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.lg,
-    paddingVertical: Space.md,
-    marginTop: Space.md,
-  },
-  netDaysLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space.sm,
-  },
-  netDaysLabel: {
-    fontSize: 13,
-  },
-  netDaysValue: {
-    fontSize: 15,
-    fontWeight: '700',
   },
 });

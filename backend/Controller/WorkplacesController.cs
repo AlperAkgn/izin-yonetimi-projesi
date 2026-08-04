@@ -51,6 +51,66 @@ namespace LeaveManagementAPI.Controller
             return Ok(workplaces);
         }
 
+        /// <summary>Yoneticinin erisebildigi, soft-delete edilmis is yerleri.</summary>
+        [HttpGet("deleted")]
+        public async Task<ActionResult<IEnumerable<WorkplaceResponse>>> GetDeleted()
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            var workplaces = await _context.Workplaces
+                .IgnoreQueryFilters()
+                .Where(w => w.DeletedAt != null && w.UserWorkplaces.Any(uw => uw.UserId == auth.AdminId))
+                .OrderByDescending(w => w.DeletedAt)
+                .ToListAsync();
+
+            return Ok(workplaces.Select(workplace =>
+            {
+                var response = ToResponse(workplace);
+                response.DeletedAt = workplace.DeletedAt;
+                return response;
+            }));
+        }
+
+        /// <summary>Is yerine atanmis (yonetici olmayan) kullanicilar; pasifler de doner.</summary>
+        [HttpGet("{id:long}/users")]
+        public async Task<ActionResult<IEnumerable<WorkplaceUserResponse>>> GetUsers(long id)
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            if (!await HasWorkplaceAccess(id, auth.AdminId))
+            {
+                return NotFound(new { message = "Is yeri bulunamadi." });
+            }
+
+            var users = await _context.UserWorkplaces
+                .Where(mapping => mapping.WorkplaceId == id && mapping.User.Role != UserRole.ADMIN)
+                .OrderBy(mapping => mapping.User.Role)
+                .ThenBy(mapping => mapping.User.Name)
+                .ThenBy(mapping => mapping.User.Surname)
+                .Select(mapping => new WorkplaceUserResponse
+                {
+                    Id = mapping.User.Id,
+                    Mail = mapping.User.Mail,
+                    Phone = mapping.User.Phone,
+                    Name = mapping.User.Name,
+                    Surname = mapping.User.Surname,
+                    Role = mapping.User.Role.ToString(),
+                    IsActive = mapping.User.IsActive,
+                    AnnualLeaveCount = mapping.AnnualLeaveCount
+                })
+                .ToListAsync();
+
+            return Ok(users);
+        }
+
         [HttpGet("{id:long}")]
         public async Task<ActionResult<WorkplaceResponse>> GetById(long id)
         {

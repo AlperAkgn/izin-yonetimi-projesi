@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { ScrollView, StyleSheet, TextInput, View, Pressable } from 'react-native';
+import { useCallback, useEffect, useState } from 'react';
+import { RefreshControl, ScrollView, StyleSheet, TextInput, View, Pressable } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 import { showConfirm } from '@/utils/alert';
 
@@ -14,6 +14,7 @@ import { useDesign } from '@/hooks/use-design';
 import { Radius, Space } from '@/constants/design';
 import { normalizePhone } from '@/utils/phone';
 import { Branch, DEFAULT_LEAVE_DAYS } from '@/services/branches';
+import { showToast } from '@/store/toastStore';
 import { useBranchesStore } from '@/store/branchesStore';
 import { useUsersStore, getBranchUsers } from '@/store/usersStore';
 import { useColumns } from '@/hooks/use-columns';
@@ -37,8 +38,9 @@ function BranchForm({ initial, onDone }: { initial?: Branch; onDone: () => void 
   const [email, setEmail] = useState(initial?.email ?? '');
   const [leaveDays, setLeaveDays] = useState(initial ? String(initial.defaultLeaveDays) : '');
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (name.trim().length < 3) return setError('Şube adı en az 3 karakter olmalı');
     if (city.trim().length === 0) return setError('Şehir boş olamaz');
     if (address.trim().length === 0) return setError('Adres boş olamaz');
@@ -59,8 +61,14 @@ function BranchForm({ initial, onDone }: { initial?: Branch; onDone: () => void 
       defaultLeaveDays: days,
     };
 
-    if (initial) updateBranch(initial.id, data);
-    else addBranch(data);
+    setSaving(true);
+    const result = initial ? await updateBranch(initial.id, data) : await addBranch(data);
+    setSaving(false);
+
+    if (!result.ok) {
+      setError(result.message ?? 'Şube kaydedilemedi.');
+      return;
+    }
     onDone();
   };
 
@@ -74,7 +82,11 @@ function BranchForm({ initial, onDone }: { initial?: Branch; onDone: () => void 
       <LabeledInput label="Şube e-postası" placeholder="Örn: izmir@sirket.com" maxLength={60} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
       <LabeledInput label="Yıllık izin hakkı (gün) — boş bırakılırsa 15" placeholder="15" maxLength={3} keyboardType="number-pad" value={leaveDays} onChangeText={setLeaveDays} />
       {error !== '' && <ThemedText style={{ color: colors.danger, fontSize: 13 }}>{error}</ThemedText>}
-      <Button label={initial ? 'Değişiklikleri Kaydet' : 'Şubeyi Kaydet'} onPress={handleSave} />
+      <Button
+        label={initial ? 'Değişiklikleri Kaydet' : 'Şubeyi Kaydet'}
+        onPress={handleSave}
+        loading={saving}
+      />
       <Button label="Vazgeç" onPress={onDone} variant="ghost" />
     </Card>
   );
@@ -94,9 +106,15 @@ function BranchCard({ branch, userCount, onEdit, onManage }: {
   const handleDelete = () => {
     showConfirm(
       'Şubeyi Sil',
-      `"${branch.name}" şubesi silinecek. 24 saat boyunca "Silinenler" bölümünden geri alınabilir; süre dolunca kalıcı olarak temizlenir. Emin misin?`,
+      `"${branch.name}" şubesi silinecek. 30 gün boyunca "Silinenler" bölümünden geri alınabilir; süre dolunca kalıcı olarak temizlenir. Emin misin?`,
       'Devam',
-      () => deleteBranch(branch.id)
+      () => {
+        void deleteBranch(branch.id).then((result) => {
+          if (!result.ok) {
+            showToast({ message: result.message ?? 'Şube silinemedi.', tone: 'danger' });
+          }
+        });
+      }
     );
   };
 
@@ -140,18 +158,33 @@ function BranchCard({ branch, userCount, onEdit, onManage }: {
 export default function BranchesScreen() {
   const { colors } = useDesign();
   const branches = useBranchesStore((s) => s.branches);
-  const branchesDeletedAt = useBranchesStore((s) => s.deletedAt);
-  const users = useUsersStore((s) => s.users);
-  const usersDeletedAt = useUsersStore((s) => s.deletedAt);
+  const fetchAll = useBranchesStore((s) => s.fetchAll);
+  const loading = useBranchesStore((s) => s.loading);
+  const branchesError = useBranchesStore((s) => s.error);
+  const byBranch = useUsersStore((s) => s.byBranch);
+  const fetchBranchesUsers = useUsersStore((s) => s.fetchBranches);
   const columns = useColumns();
 
   const [mode, setMode] = useState<'list' | 'add' | { edit: Branch }>('list');
   const [search, setSearch] = useState('');
 
-  const active = branches.filter((b) => !(b.id in branchesDeletedAt));
+  // Drawer ekranı açık kaldığı için her odaklanmada listeyi tazele
+  // (şube detayında personel ekleme/silme sonrası sayılar güncel kalsın)
+  useFocusEffect(
+    useCallback(() => {
+      void fetchAll(true);
+    }, [fetchAll]),
+  );
+
+  // Kartlardaki "X kişi" rozetleri için şube personeli yüklenir
+  useEffect(() => {
+    if (branches.length > 0) {
+      void fetchBranchesUsers(branches.map((b) => b.id));
+    }
+  }, [branches, fetchBranchesUsers]);
 
   const q = search.trim().toLocaleLowerCase('tr-TR');
-  const filtered = q === '' ? active : active.filter(
+  const filtered = q === '' ? branches : branches.filter(
     (b) => b.name.toLocaleLowerCase('tr-TR').includes(q) || b.city.toLocaleLowerCase('tr-TR').includes(q)
   );
 
@@ -164,7 +197,12 @@ export default function BranchesScreen() {
 
   return (
     <View style={[styles.screenRoot, { backgroundColor: colors.bg }]}>
-      <ScrollView style={styles.flex} contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        style={styles.flex}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={() => void fetchAll(true)} />
+        }>
         <View style={styles.contentWrap}>
           <View style={styles.headerRow}>
             <Button label="+ Yeni Şube Ekle" onPress={() => setMode('add')} />
@@ -175,6 +213,12 @@ export default function BranchesScreen() {
               <ThemedText style={[styles.trashText, { color: colors.textMuted }]}>Silinenler</ThemedText>
             </Pressable>
           </View>
+
+          {branchesError && (
+            <ThemedText style={{ color: colors.danger, fontSize: 13, marginTop: Space.md }}>
+              {branchesError}
+            </ThemedText>
+          )}
 
           <View style={[styles.searchBar, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
             <Feather name="search" size={18} color={colors.textMuted} />
@@ -200,7 +244,7 @@ export default function BranchesScreen() {
                 style={[styles.gridItem, { width: `${100 / columns}%` }]}>
                 <BranchCard
                   branch={item}
-                  userCount={getBranchUsers(users, usersDeletedAt, item.id).length}
+                  userCount={getBranchUsers(byBranch, item.id).length}
                   onEdit={() => setMode({ edit: item })}
                   onManage={() => router.push(`/branch/${item.id}`)}
                 />

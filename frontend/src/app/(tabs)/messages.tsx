@@ -1,8 +1,10 @@
 import { router } from 'expo-router';
-import { FlatList, Pressable, StyleSheet, View } from 'react-native';
+import { useEffect } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
+import { EmptyState } from '@/components/ui/empty-state';
 import { Screen } from '@/components/ui/screen';
 import { Radius, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
@@ -72,6 +74,12 @@ function ConversationRow({
 
 export default function MessagesScreen() {
   const conversations = useMessagesStore((s) => s.conversations);
+  const fetchConversations = useMessagesStore((s) => s.fetchConversations);
+  const loading = useMessagesStore((s) => s.loadingConversations);
+
+  useEffect(() => {
+    void fetchConversations();
+  }, [fetchConversations]);
 
   return (
     <Screen scroll={false}>
@@ -81,6 +89,18 @@ export default function MessagesScreen() {
         renderItem={({ item, index }) => (
           <ConversationRow item={item} isLast={index === conversations.length - 1} index={index} />
         )}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={() => void fetchConversations()} />
+        }
+        ListEmptyComponent={
+          loading ? null : (
+            <EmptyState
+              icon="message-circle"
+              title="Henüz sohbet yok"
+              description="Sağ üstteki kalem simgesiyle yeni bir sohbet başlatabilirsin."
+            />
+          )
+        }
         contentContainerStyle={styles.list}
       />
     </Screen>

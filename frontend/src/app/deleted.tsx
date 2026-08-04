@@ -1,37 +1,66 @@
+import { useCallback } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { Stack } from 'expo-router';
+import { Stack, useFocusEffect } from 'expo-router';
 
 import { ThemedText } from '@/components/themed-text';
 import { BackButton } from '@/components/ui/back-button';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useDesign } from '@/hooks/use-design';
-import { Radius, Space } from '@/constants/design';
+import { Space } from '@/constants/design';
+import { showToast } from '@/store/toastStore';
 import { useBranchesStore, PURGE_AFTER_MS } from '@/store/branchesStore';
 import { useUsersStore } from '@/store/usersStore';
 
-function remaining(deletedAtMs: number) {
+/** Silinen şube 30 gün içinde geri alınabilir; kalan süre gösterilir */
+function remaining(deletedAtIso: string) {
+  const deletedAtMs = new Date(deletedAtIso).getTime();
   const ms = Math.max(0, deletedAtMs + PURGE_AFTER_MS - Date.now());
-  const hours = Math.floor(ms / (60 * 60 * 1000));
-  const minutes = Math.floor((ms % (60 * 60 * 1000)) / (60 * 1000));
-  return `${hours} sa ${minutes} dk`;
+  const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+  const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+  return days > 0 ? `${days} gün ${hours} sa` : `${hours} sa`;
 }
 
 export default function DeletedScreen() {
   const { colors } = useDesign();
 
-  const branches = useBranchesStore((s) => s.branches);
-  const branchDeletedAt = useBranchesStore((s) => s.deletedAt);
+  const deleted = useBranchesStore((s) => s.deleted);
+  const fetchDeleted = useBranchesStore((s) => s.fetchDeleted);
   const restoreBranch = useBranchesStore((s) => s.restoreBranch);
 
-  const users = useUsersStore((s) => s.users);
-  const userDeletedAt = useUsersStore((s) => s.deletedAt);
+  const deletedUsers = useUsersStore((s) => s.deletedUsers);
+  const fetchDeletedUsers = useUsersStore((s) => s.fetchDeleted);
   const restoreUser = useUsersStore((s) => s.restoreUser);
 
-  const deletedBranches = branches.filter((b) => b.id in branchDeletedAt);
-  const deletedUsers = users.filter((u) => u.id in userDeletedAt);
+  // Ekran her odaklandığında iki liste de sunucudan tazelenir
+  useFocusEffect(
+    useCallback(() => {
+      void fetchDeleted();
+      void fetchDeletedUsers();
+    }, [fetchDeleted, fetchDeletedUsers]),
+  );
 
-  const nothing = deletedBranches.length === 0 && deletedUsers.length === 0;
+  const handleRestoreBranch = (id: string, name: string) => {
+    void restoreBranch(id).then((result) => {
+      if (!result.ok) {
+        showToast({ message: result.message ?? 'Şube geri alınamadı.', tone: 'danger' });
+      } else {
+        showToast({ message: `"${name}" şubesi geri alındı.`, tone: 'success' });
+      }
+    });
+  };
+
+  const handleRestoreUser = (id: string, name: string) => {
+    void restoreUser(id).then((result) => {
+      if (!result.ok) {
+        showToast({ message: result.message ?? 'Kullanıcı geri alınamadı.', tone: 'danger' });
+      } else {
+        showToast({ message: `${name} geri alındı ve yeniden aktif.`, tone: 'success' });
+      }
+    });
+  };
+
+  const nothing = deleted.length === 0 && deletedUsers.length === 0;
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
@@ -55,22 +84,24 @@ export default function DeletedScreen() {
             </View>
           )}
 
-          {deletedBranches.length > 0 && (
+          {deleted.length > 0 && (
             <View style={styles.section}>
               <ThemedText style={styles.sectionTitle}>Silinen Şubeler</ThemedText>
-              {deletedBranches.map((b) => (
+              {deleted.map((b) => (
                 <Card key={b.id}>
                   <View style={styles.row}>
                     <View style={styles.rowBody}>
                       <ThemedText style={[styles.name, styles.strike, { color: colors.textMuted }]}>
                         {b.name}
                       </ThemedText>
-                      <ThemedText style={[styles.timer, { color: colors.danger }]}>
-                        Kalıcı silinmeye kalan: {remaining(branchDeletedAt[b.id])}
-                      </ThemedText>
+                      {b.deletedAt && (
+                        <ThemedText style={[styles.timer, { color: colors.danger }]}>
+                          Kalıcı silinmeye kalan: {remaining(b.deletedAt)}
+                        </ThemedText>
+                      )}
                     </View>
                   </View>
-                  <Button label="Geri Al" onPress={() => restoreBranch(b.id)} variant="ghost" />
+                  <Button label="Geri Al" onPress={() => handleRestoreBranch(b.id, b.name)} variant="ghost" />
                 </Card>
               ))}
             </View>
@@ -86,12 +117,20 @@ export default function DeletedScreen() {
                       <ThemedText style={[styles.name, styles.strike, { color: colors.textMuted }]}>
                         {u.firstName} {u.lastName}
                       </ThemedText>
-                      <ThemedText style={[styles.timer, { color: colors.danger }]}>
-                        Kalıcı silinmeye kalan: {remaining(userDeletedAt[u.id])}
+                      <ThemedText style={[styles.meta, { color: colors.textFaint }]} numberOfLines={1}>
+                        {u.role}
+                        {u.branchName ? ` · ${u.branchName}` : ''} · {u.email}
+                      </ThemedText>
+                      <ThemedText style={[styles.timer, { color: colors.textMuted }]}>
+                        Geri alınana kadar saklanır
                       </ThemedText>
                     </View>
                   </View>
-                  <Button label="Geri Al" onPress={() => restoreUser(u.id)} variant="ghost" />
+                  <Button
+                    label="Geri Al"
+                    onPress={() => handleRestoreUser(u.id, `${u.firstName} ${u.lastName}`)}
+                    variant="ghost"
+                  />
                 </Card>
               ))}
             </View>
@@ -112,6 +151,7 @@ const styles = StyleSheet.create({
   rowBody: { flex: 1, gap: 2 },
   name: { fontSize: 15, fontWeight: '600' },
   strike: { textDecorationLine: 'line-through' },
+  meta: { fontSize: 12 },
   timer: { fontSize: 12 },
   emptyState: { alignItems: 'center', paddingVertical: Space.xxl },
   emptyText: { fontSize: 15, fontStyle: 'italic' },

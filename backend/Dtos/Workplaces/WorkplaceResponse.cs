@@ -17,5 +17,8 @@ namespace LeaveManagementAPI.Models.Workplaces
         public bool IsActive { get; set; }
 
         public int LeaveCount { get; set; } = 15;
+
+        /// <summary>Yalnizca silinen is yerleri listesinde dolu doner.</summary>
+        public DateTime? DeletedAt { get; set; }
     }
 }

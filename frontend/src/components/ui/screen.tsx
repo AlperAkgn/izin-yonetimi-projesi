@@ -1,5 +1,5 @@
-import { ReactNode } from 'react';
-import { ScrollView, View, StyleSheet } from 'react-native';
+import { ReactNode, ReactElement } from 'react';
+import { ScrollView, View, StyleSheet, RefreshControlProps } from 'react-native';
 import { useDesign } from '@/hooks/use-design';
 import { Space } from '@/constants/design';
 
@@ -7,10 +7,13 @@ export function Screen({
   children,
   scroll = true,
   wide = false,
+  refreshControl,
 }: {
   children: ReactNode;
   scroll?: boolean;
   wide?: boolean;
+  /** Aşağı çekerek yenileme — yalnızca scroll=true iken geçerli */
+  refreshControl?: ReactElement<RefreshControlProps>;
 }) {
   const { colors } = useDesign();
   const maxWidth = wide ? 1200 : 480;
@@ -21,7 +24,8 @@ export function Screen({
     return (
       <ScrollView
         style={[styles.root, { backgroundColor: colors.bg }]}
-        contentContainerStyle={styles.scrollContent}>
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={refreshControl}>
         <View style={[styles.inner, { maxWidth }]}>{children}</View>
       </ScrollView>
     );

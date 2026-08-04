@@ -66,7 +66,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             OnMessageReceived = context =>
             {
-                if (context.HttpContext.Request.Path.StartsWithSegments("/ws")
+                // WebSocket el sikismasi ve dosya eki indirme linklerinde
+                // Authorization header'i tasinamiyor; token query'den okunur.
+                var path = context.HttpContext.Request.Path;
+                if ((path.StartsWithSegments("/ws")
+                        || path.StartsWithSegments("/api/messages/attachments"))
                     && context.Request.Query.TryGetValue("access_token", out var token))
                 {
                     context.Token = token;

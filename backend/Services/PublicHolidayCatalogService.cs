@@ -30,7 +30,23 @@ public sealed class PublicHolidayCatalogService(
 
     public async Task<int> SyncYearAsync(int year, CancellationToken cancellationToken = default)
     {
-        var remoteHolidays = await remoteService.GetTurkishHolidaysAsync(year, cancellationToken);
+        // Dis kaynak ayni tarihe birden fazla kayit dondurebilir (orn. 19.05.2027:
+        // Genclik ve Spor Bayrami ile Kurban Bayrami cakisiyor). Tarih kolonunda
+        // benzersiz indeks oldugundan tek kayda indirgenir, isimler birlestirilir;
+        // aksi halde SaveChanges tum yilin senkronunu geri aliyordu ve o yil icin
+        // tatil verisi hic olusmuyordu.
+        var remoteHolidays = (await remoteService.GetTurkishHolidaysAsync(year, cancellationToken))
+            .GroupBy(item => item.Date)
+            .Select(group => group.Count() == 1
+                ? group.First()
+                : new PublicHoliday(
+                    group.Key,
+                    string.Join(" / ", group
+                        .Select(item => item.Name)
+                        .Where(name => !string.IsNullOrWhiteSpace(name))
+                        .Distinct())))
+            .OrderBy(item => item.Date)
+            .ToList();
         var remoteDates = remoteHolidays.Select(item => item.Date).ToHashSet();
         var existing = await context.PublicHolidays
             .Where(item => item.Date.Year == year).ToListAsync(cancellationToken);

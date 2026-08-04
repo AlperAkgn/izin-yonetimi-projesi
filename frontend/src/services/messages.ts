@@ -1,44 +1,39 @@
+import { Platform } from 'react-native';
+
+import { API_BASE_URL, apiFetch } from '@/services/api';
+import { useAuthStore } from '@/store/authStore';
+
 /**
  * ============================================================
- * MESAJLAŞMA SERVİSİ — BACKEND EKİBİNE NOTLAR
+ * MESAJLAŞMA SERVİSİ — /api/messages + STOMP WebSocket
  * ============================================================
- * Şu an tüm veri mock. Gerçek entegrasyonda bu dosyanın içi değişecek,
- * ekranlar (messages.tsx, chat/[id].tsx) DEĞİŞMEYECEK.
- *
- * GEREKSİNİMLER (şartname 3.3):
- * 1. Gerçek zamanlı (real-time) mimari → WebSocket (Socket.io öneriliyor).
- *    - Bağlantı JWT ile authenticate edilmeli (handshake'te token).
- *    - Kullanıcı bağlanınca kendi user-id'li bir "room"a join olmalı,
- *      birebir mesaj o room'a emit edilmeli.
- *
- * 2. Medya + belge gönderimi:
- *    - Maksimum dosya boyutu İSTEK BAŞINA 5MB. Bu limit SADECE frontend'de
- *      değil, BACKEND'de de tekrar kontrol edilmeli (frontend'e güvenme).
- *    - Dosya yükleme akışı için iki seçenek, backend ekibi karar versin:
- *      a) Dosya multipart/form-data ile REST endpoint'e yüklenir, dönen
- *         URL socket mesajında referans olarak gönderilir. (ÖNERİLEN)
- *      b) Dosya base64 olarak socket üzerinden gönderilir. (5MB için riskli,
- *         socket payload limitlerini zorlar — önerilmez.)
- *    - Yüklenen dosyalar ayrı bir tabloda (attachment) tutulmalı,
- *      message ile foreign key ilişkisi kurulmalı.
- *
- * 3. Veri saklama (şartname 3.3 — Data Retention):
- *    - 30 günü dolan mesajlar VE bağlı dosyalar kalıcı silinmeli (cron job).
- *    - DİKKAT / MENTÖRE SORULACAK ÇELİŞKİ: Şartname 4.1 "tüm tablolarda DELETE
- *      yasak, her şey soft-delete" diyor. Ama 3.3 mesajlar için "kalıcı temizlik"
- *      istiyor. Bu ikisi çelişiyor. Mesaj retention'ı bilinçli bir istisna mı,
- *      yoksa soft-delete mi uygulanacak? Kodlamadan önce netleştirilmeli.
- *
- * BEKLENEN SOCKET OLAYLARI (öneri, backend ile mutabık kalınmalı):
- *   - emit "message:send"    { conversationId, text, attachment? }
- *   - on   "message:new"     { id, conversationId, senderId, text, attachment?, createdAt }
- *   - on   "message:sent"    { tempId, id }  // optimistic update onayı
- * ============================================================
+ * - Sohbet listesi / geçmişi / dosya yükleme REST ile çalışır.
+ * - Mesaj GÖNDERİMİ yalnızca WebSocket (STOMP) üzerinden yapılır;
+ *   sunucu mesajı hem alıcının hem gönderenin kuyruğuna yayınlar
+ *   (services/stomp.ts + store/messagesStore.ts).
+ * - Dosya limiti istek başına 5MB; backend de ayrıca doğrular.
  */
 
+export const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB — şartname limiti
+
+/** Sohbet kimliği = karşı tarafın kullanıcı id'si */
+export type Conversation = {
+  id: string;
+  name: string;
+  role: string;
+  lastMessage: string;
+  lastAt: string;
+  /** Son mesajın zamanı (sıralama için) */
+  lastTs: number;
+  unread: number;
+};
+
 export type Attachment = {
+  /** Sunucudaki ek kaydı — henüz gönderilmemiş yerel dosyada yoktur */
+  id?: number;
   name: string;
   uri: string;
+  mimeType?: string;
   type: 'image' | 'file';
   sizeBytes: number;
 };
@@ -46,25 +41,142 @@ export type Attachment = {
 export type Message = {
   id: string;
   conversationId: string;
-  senderId: string; // 'me' = ben, diğerleri karşı taraf
+  /** 'me' = oturumdaki kullanıcı; diğer her değer karşı taraf */
+  senderId: string;
   text: string;
   attachment?: Attachment;
   createdAt: string; // ISO
 };
 
-export type Conversation = {
-  id: string;
-  name: string;
-  lastMessage: string;
-  lastAt: string;
-  unread: number;
+// ---- Backend DTO'ları ----
+type AttachmentDto = {
+  id: number;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  downloadUrl: string;
 };
 
-export const MAX_FILE_BYTES = 5 * 1024 * 1024; // 5MB — şartname limiti
+export type MessageDto = {
+  id: number;
+  senderId: number;
+  receiverId: number;
+  content: string;
+  timestamp: string;
+  isRead: boolean;
+  attachments?: AttachmentDto[];
+};
 
-// ---- MOCK VERİ ----
-export const MOCK_CONVERSATIONS: Conversation[] = [
-  { id: 'c1', name: 'Batuhan Hasdemir (İK)', lastMessage: 'İzin talebini aldım, bakıyorum.', lastAt: '14:32', unread: 2 },
-  { id: 'c2', name: 'Alper Akgün', lastMessage: 'Toplantı notlarını attım.', lastAt: '11:05', unread: 0 },
-  { id: 'c3', name: 'Melis Turan', lastMessage: 'Teşekkürler!', lastAt: 'Dün', unread: 0 },
-];
+type ConversationDto = {
+  partnerId: number;
+  partnerName: string;
+  partnerRole: string;
+  lastContent: string;
+  lastTimestamp: string;
+  lastSenderId: number;
+  lastHasAttachment: boolean;
+  unreadCount: number;
+};
+
+/**
+ * İndirilebilir ek bağlantısı. Authorization header'ı taşınamadığı için
+ * token query'de gider (backend /api/messages/attachments için buna izin verir).
+ */
+export function attachmentDownloadUrl(downloadUrl: string): string {
+  const token = useAuthStore.getState().token ?? '';
+  return `${API_BASE_URL}${downloadUrl}?access_token=${encodeURIComponent(token)}`;
+}
+
+function toAttachment(dto: AttachmentDto): Attachment {
+  return {
+    id: dto.id,
+    name: dto.fileName,
+    uri: attachmentDownloadUrl(dto.downloadUrl),
+    mimeType: dto.contentType,
+    type: dto.contentType.startsWith('image/') ? 'image' : 'file',
+    sizeBytes: dto.sizeBytes,
+  };
+}
+
+export function mapMessage(dto: MessageDto, myUserId: string): Message {
+  const mine = String(dto.senderId) === myUserId;
+  const attachment = dto.attachments?.[0];
+  return {
+    id: String(dto.id),
+    conversationId: mine ? String(dto.receiverId) : String(dto.senderId),
+    senderId: mine ? 'me' : String(dto.senderId),
+    text: dto.content,
+    attachment: attachment ? toAttachment(attachment) : undefined,
+    createdAt: dto.timestamp,
+  };
+}
+
+/** Sohbet listesindeki zaman etiketi: bugün "14:32", dün "Dün", eskisi "12.08" */
+export function timeLabel(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(now) - startOfDay(date)) / (24 * 60 * 60 * 1000));
+
+  if (dayDiff <= 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+  if (dayDiff === 1) return 'Dün';
+  return date.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' });
+}
+
+export function mapConversation(dto: ConversationDto): Conversation {
+  const preview =
+    dto.lastContent.trim().length > 0
+      ? dto.lastContent
+      : dto.lastHasAttachment
+        ? '📎 Dosya'
+        : '';
+  return {
+    id: String(dto.partnerId),
+    name: dto.partnerName,
+    role: dto.partnerRole,
+    lastMessage: preview,
+    lastAt: timeLabel(dto.lastTimestamp),
+    lastTs: new Date(dto.lastTimestamp).getTime(),
+    unread: dto.unreadCount,
+  };
+}
+
+export async function fetchConversations(): Promise<Conversation[]> {
+  const list = await apiFetch<ConversationDto[]>('/api/messages/conversations');
+  return list.map(mapConversation);
+}
+
+/** Geçmişi getirir; backend bu çağrıda karşı taraftan gelenleri okundu işaretler */
+export async function fetchConversationMessages(
+  myUserId: string,
+  partnerId: string,
+): Promise<Message[]> {
+  const list = await apiFetch<MessageDto[]>(`/api/messages/${myUserId}/${partnerId}`);
+  return list.map((dto) => mapMessage(dto, myUserId));
+}
+
+export type PickedFile = {
+  uri: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+};
+
+/** Dosyayı yükler; dönen ek id'si STOMP mesajına iliştirilir */
+export async function uploadAttachment(file: PickedFile): Promise<AttachmentDto> {
+  const form = new FormData();
+
+  if (Platform.OS === 'web') {
+    const blob = await (await fetch(file.uri)).blob();
+    form.append('file', new File([blob], file.name, { type: file.mimeType }));
+  } else {
+    // React Native'in FormData'sı {uri,name,type} nesnesini dosya olarak yükler
+    form.append('file', {
+      uri: file.uri,
+      name: file.name,
+      type: file.mimeType,
+    } as unknown as Blob);
+  }
+
+  return apiFetch<AttachmentDto>('/api/messages/attachments', { method: 'POST', formData: form });
+}

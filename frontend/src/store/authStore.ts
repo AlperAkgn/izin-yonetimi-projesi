@@ -1,19 +1,23 @@
 import { create } from 'zustand';
 
-type User = {
+export type Role = 'EMPLOYEE' | 'HR' | 'ADMIN';
+
+export type AuthUser = {
   id: string;
+  email: string;
   name: string;
-  role: 'EMPLOYEE' | 'HR' | 'ADMIN';
+  role: Role;
   branchId: string | null;
   branchName: string | null;
+  /** Yıllık izin hakkı (gün) — /api/Users/me'den gelir, admin için null */
+  entitlement: number | null;
   isFirstLogin: boolean;
 };
 
 type AuthState = {
-  user: User | null;
+  user: AuthUser | null;
   token: string | null;
-  isLoading: boolean;
-  login: (user: User, token: string) => void;
+  login: (user: AuthUser, token: string) => void;
   logout: () => void;
   completeFirstLogin: () => void;
 };
@@ -21,7 +25,6 @@ type AuthState = {
 export const useAuthStore = create<AuthState>((set) => ({
   user: null,
   token: null,
-  isLoading: false,
   login: (user, token) => set({ user, token }),
   logout: () => set({ user: null, token: null }),
   completeFirstLogin: () =>

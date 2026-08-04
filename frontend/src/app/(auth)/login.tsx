@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
@@ -39,6 +40,8 @@ export default function LoginScreen() {
       return;
     }
     login(result.user, result.token);
+    // İlk girişte şifre değiştirme zorunlu; değilse panele geç
+    router.replace(result.user.isFirstLogin ? '/change-password' : '/');
   };
 
   return (
@@ -76,7 +79,7 @@ export default function LoginScreen() {
         </Card>
 
         <ThemedText style={[styles.hint, { color: colors.textFaint }]}>
-          Test — mobil: employee@permitflow.com{'\n'}web: hr@permitflow.com veya admin@permitflow.com{'\n'}şifre: 123456
+          Personel girişi mobil uygulamadan, yönetici ve İK girişi web üzerinden yapılır.
         </ThemedText>
       </View>
     </View>
