@@ -40,10 +40,9 @@ namespace LeaveManagementAPI.Controller
                 return Unauthorized(new { message = "Gecersiz token." });
             }
 
-            var requests = await _context.LeaveRequests
+            var requests = await ProjectToResponse(_context.LeaveRequests
                 .Where(request => request.UserId == userId)
-                .OrderByDescending(request => request.StartDate)
-                .Select(request => ToResponse(request))
+                .OrderByDescending(request => request.StartDate))
                 .ToListAsync();
 
             return Ok(requests);
@@ -73,9 +72,8 @@ namespace LeaveManagementAPI.Controller
                     && request.User.Role == UserRole.EMPLOYEE);
             }
 
-            var requests = await query
-                .OrderByDescending(request => request.StartDate)
-                .Select(request => ToResponse(request))
+            var requests = await ProjectToResponse(query
+                .OrderByDescending(request => request.StartDate))
                 .ToListAsync();
 
             return Ok(requests);
@@ -178,7 +176,9 @@ namespace LeaveManagementAPI.Controller
                 await NotifyEmergencyLeaveApprovedAsync(leaveRequest, currentUser, cancellationToken);
             }
 
-            return Created($"/api/leave-requests/{leaveRequest.Id}", ToResponse(leaveRequest));
+            return Created(
+                $"/api/leave-requests/{leaveRequest.Id}",
+                await ToResponseAsync(leaveRequest.Id, cancellationToken));
         }
 
         // An administrator may create a leave record for an existing employee.
@@ -287,7 +287,9 @@ namespace LeaveManagementAPI.Controller
                 await NotifyEmergencyLeaveApprovedAsync(leaveRequest, employee, cancellationToken);
             }
 
-            return Created($"/api/leave-requests/{leaveRequest.Id}", ToResponse(leaveRequest));
+            return Created(
+                $"/api/leave-requests/{leaveRequest.Id}",
+                await ToResponseAsync(leaveRequest.Id, cancellationToken));
         }
 
         [HttpPost("{id:long}/approve")]
@@ -374,7 +376,7 @@ namespace LeaveManagementAPI.Controller
                 await _context.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
 
-                return Ok(ToResponse(leaveRequest));
+                return Ok(await ToResponseAsync(leaveRequest.Id, cancellationToken));
             }
 
             var requestUpdated = await _context.LeaveRequests
@@ -402,7 +404,7 @@ namespace LeaveManagementAPI.Controller
             await _context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
-            return Ok(ToResponse(leaveRequest));
+            return Ok(await ToResponseAsync(leaveRequest.Id, cancellationToken));
         }
 
         [HttpPost("{id:long}/reject")]
@@ -466,7 +468,7 @@ namespace LeaveManagementAPI.Controller
             });
             await _context.SaveChangesAsync(cancellationToken);
 
-            return Ok(ToResponse(leaveRequest));
+            return Ok(await ToResponseAsync(leaveRequest.Id, cancellationToken));
         }
 
         [HttpPost("{id:long}/cancel")]
@@ -515,7 +517,7 @@ namespace LeaveManagementAPI.Controller
             await _context.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
 
-            return Ok(ToResponse(leaveRequest));
+            return Ok(await ToResponseAsync(leaveRequest.Id, cancellationToken));
         }
 
         private async Task<User?> GetCurrentUserAsync()
@@ -687,23 +689,51 @@ namespace LeaveManagementAPI.Controller
             return null;
         }
 
-        private static LeaveRequestResponse ToResponse(LeaveRequest leaveRequest)
+        /// <summary>
+        /// Talep sahibinin adi, is yeri adi ve yillik izin hakki gibi ekranda
+        /// gereken alanlari tek sorguda dolduran ortak projeksiyon.
+        /// </summary>
+        private static IQueryable<LeaveRequestResponse> ProjectToResponse(IQueryable<LeaveRequest> query)
         {
-            return new LeaveRequestResponse
+            return query.Select(request => new LeaveRequestResponse
             {
-                Id = leaveRequest.Id,
-                UserId = leaveRequest.UserId,
-                WorkplaceId = leaveRequest.WorkplaceId,
-                LeaveType = leaveRequest.LeaveType.ToString(),
-                StartDate = leaveRequest.StartDate,
-                EndDate = leaveRequest.EndDate,
-                Description = leaveRequest.Description,
-                EmergencyContact = leaveRequest.EmergencyContact,
-                LeaveAddress = leaveRequest.LeaveAddress,
-                Status = leaveRequest.Status.ToString(),
-                ChargedLeaveDays = leaveRequest.ChargedLeaveDays,
-                RejectionReason = leaveRequest.RejectionReason
-            };
+                Id = request.Id,
+                UserId = request.UserId,
+                WorkplaceId = request.WorkplaceId,
+                UserName = request.User.Name,
+                UserSurname = request.User.Surname,
+                WorkplaceName = request.Workplace.Name,
+                UserAnnualLeaveCount = request.User.UserWorkplaces
+                    .Where(mapping => mapping.WorkplaceId == request.WorkplaceId)
+                    .Select(mapping => (int?)mapping.AnnualLeaveCount)
+                    .FirstOrDefault(),
+                LeaveType = request.LeaveType.ToString(),
+                StartDate = request.StartDate,
+                EndDate = request.EndDate,
+                Description = request.Description,
+                EmergencyContact = request.EmergencyContact,
+                LeaveAddress = request.LeaveAddress,
+                Status = request.Status.ToString(),
+                ChargedLeaveDays = request.ChargedLeaveDays,
+                RejectionReason = request.RejectionReason,
+                CreatedByAdmin = (request.Audits
+                    .OrderBy(audit => audit.ActionAt)
+                    .ThenBy(audit => audit.Id)
+                    .Select(audit => (long?)audit.ActionByUserId)
+                    .FirstOrDefault() ?? request.UserId) != request.UserId,
+                ProcessedAt = request.Audits
+                    .Where(audit => audit.ActionType != AuditActionType.CREATED)
+                    .OrderByDescending(audit => audit.ActionAt)
+                    .Select(audit => (DateTime?)audit.ActionAt)
+                    .FirstOrDefault()
+            });
+        }
+
+        /// <summary>Tek bir talebi, listelerle ayni zengin bicimde dondurur.</summary>
+        private Task<LeaveRequestResponse> ToResponseAsync(long leaveRequestId, CancellationToken cancellationToken)
+        {
+            return ProjectToResponse(_context.LeaveRequests.Where(request => request.Id == leaveRequestId))
+                .SingleAsync(cancellationToken);
         }
     }
 }

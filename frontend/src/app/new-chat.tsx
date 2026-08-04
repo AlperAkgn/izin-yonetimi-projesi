@@ -1,13 +1,14 @@
 import Feather from '@expo/vector-icons/Feather';
 import { router, Stack } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, TextInput, View } from 'react-native';
 
 import { BackButton } from '@/components/ui/back-button';
 import { ThemedText } from '@/components/themed-text';
 import { Radius, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
-import { Employee, MOCK_EMPLOYEES } from '@/services/employees';
+import { getErrorMessage } from '@/services/api';
+import { Employee, fetchContacts } from '@/services/employees';
 import { useMessagesStore } from '@/store/messagesStore';
 
 function Avatar({ name }: { name: string }) {
@@ -23,16 +24,37 @@ function Avatar({ name }: { name: string }) {
 export default function NewChatScreen() {
   const { colors } = useDesign();
   const [query, setQuery] = useState('');
+  const [contacts, setContacts] = useState<Employee[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
   const startConversationWith = useMessagesStore((s) => s.startConversationWith);
+
+  // Sohbet başlatılabilecek kişiler sunucudan gelir (aktif kullanıcılar)
+  useEffect(() => {
+    let cancelled = false;
+    fetchContacts()
+      .then((list) => {
+        if (!cancelled) setContacts(list);
+      })
+      .catch((err) => {
+        if (!cancelled) setError(getErrorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase('tr-TR');
-    if (q === '') return MOCK_EMPLOYEES;
-    return MOCK_EMPLOYEES.filter((e) => e.name.toLocaleLowerCase('tr-TR').includes(q));
-  }, [query]);
+    if (q === '') return contacts;
+    return contacts.filter((e) => e.name.toLocaleLowerCase('tr-TR').includes(q));
+  }, [contacts, query]);
 
   const openChat = (emp: Employee) => {
-    const convId = startConversationWith(emp.id, emp.name);
+    const convId = startConversationWith(emp.id, emp.name, emp.role);
     router.replace(`/chat/${convId}`);
   };
 
@@ -70,8 +92,8 @@ export default function NewChatScreen() {
         keyExtractor={(e) => e.id}
         keyboardShouldPersistTaps="handled"
         ListEmptyComponent={
-          <ThemedText style={[styles.empty, { color: colors.textMuted }]}>
-            Eşleşen çalışan yok
+          <ThemedText style={[styles.empty, { color: error ? colors.danger : colors.textMuted }]}>
+            {loading ? 'Kişiler yükleniyor...' : error !== '' ? error : 'Eşleşen çalışan yok'}
           </ThemedText>
         }
         renderItem={({ item, index }) => (

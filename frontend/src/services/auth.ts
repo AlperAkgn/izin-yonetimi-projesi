@@ -1,64 +1,102 @@
 import { Platform } from 'react-native';
 
-export type Role = 'EMPLOYEE' | 'HR' | 'ADMIN';
+import { apiFetch, getErrorMessage } from '@/services/api';
 
-export type AuthUser = {
-  id: string;
-  name: string;
-  role: Role;
-  branchId: string | null;
-  branchName: string | null;
-  isFirstLogin: boolean;
+import type { AuthUser, Role } from '@/store/authStore';
+
+export type { AuthUser, Role };
+
+type LoginResponseDto = {
+  token: string;
+  expiresAt: string;
+  user: {
+    id: number;
+    mail: string;
+    name: string;
+    surname: string;
+    role: string;
+    isFirstLogin: boolean;
+  };
 };
+
+type CurrentUserDto = {
+  id: number;
+  mail: string;
+  phone: string;
+  name: string;
+  surname: string;
+  role: string;
+  isFirstLogin: boolean;
+  workplaceId?: number | null;
+  workplaceName?: string | null;
+  annualLeaveCount?: number | null;
+};
+
 type LoginResult =
   | { success: true; user: AuthUser; token: string }
   | { success: false; message: string };
 
-/**
- * BACKEND NOTU:
- * - Login response'unda user objesi role ile birlikte branchId/branchName içermeli.
- * - Admin için branch null olabilir (tüm şubelere erişim).
- * - Platform kısıtı (mobil=Employee, web=HR/Admin) İSTENİYORSA backend'de de
- *   uygulanmalı: frontend kontrolü güvenlik sağlamaz. Login isteğine client tipi
- *   eklenebilir (ör. header X-Client: mobile|web) ve sunucu buna göre reddedebilir.
- */
-
-const MOCK_USERS: Record<string, { password: string; user: AuthUser }> = {
-  'employee@permitflow.com': {
-    password: '123456',
-    user: { id: '1', name: 'Test Personel', role: 'EMPLOYEE', branchId: 'b1', branchName: 'İstanbul Merkez', isFirstLogin: true },
-  },
-  'hr@permitflow.com': {
-    password: '123456',
-    user: { id: '2', name: 'Ayşe Yılmaz', role: 'HR', branchId: 'b1', branchName: 'İstanbul Merkez', isFirstLogin: true },
-  },
-  'admin@permitflow.com': {
-    password: '123456',
-    user: { id: '3', name: 'Burak Çelik', role: 'ADMIN', branchId: null, branchName: null, isFirstLogin: true },
-  },
-};
-
-export async function loginRequest(email: string, password: string): Promise<LoginResult> {
-  await new Promise((r) => setTimeout(r, 500));
-
-  const entry = MOCK_USERS[email.toLocaleLowerCase('tr-TR')];
-  if (!entry || entry.password !== password) {
-    return { success: false, message: 'E-posta veya şifre hatalı' };
-  }
-
-  const isWeb = Platform.OS === 'web';
-  const role = entry.user.role;
-
-  if (isWeb && role === 'EMPLOYEE') {
-    return { success: false, message: 'Personel girişi yalnızca mobil uygulamadan yapılabilir' };
-  }
-  if (!isWeb && role !== 'EMPLOYEE') {
-    return { success: false, message: 'Yönetici ve İK girişi yalnızca web üzerinden yapılabilir' };
-  }
-
+function toAuthUser(me: CurrentUserDto, isFirstLogin: boolean): AuthUser {
   return {
-    success: true,
-    token: 'sahte-jwt-token',
-    user: entry.user,
+    id: String(me.id),
+    email: me.mail,
+    name: `${me.name} ${me.surname}`.trim(),
+    role: me.role as Role,
+    branchId: me.workplaceId != null ? String(me.workplaceId) : null,
+    branchName: me.workplaceName ?? null,
+    entitlement: me.annualLeaveCount ?? null,
+    isFirstLogin,
   };
+}
+
+/**
+ * POST /api/Auth/login + GET /api/Users/me
+ * Şube ve izin hakkı bilgisi login yanıtında olmadığı için profil ayrıca çekilir.
+ *
+ * Platform kısıtı (mobil=Personel, web=İK/Yönetici) şimdilik istemcide;
+ * backend rol bazlı yetkilendirmeyi zaten her endpoint'te uyguluyor.
+ */
+export async function loginRequest(email: string, password: string): Promise<LoginResult> {
+  try {
+    const login = await apiFetch<LoginResponseDto>('/api/Auth/login', {
+      method: 'POST',
+      auth: false,
+      body: { mail: email.trim(), password },
+    });
+
+    const role = login.user.role as Role;
+    const isWeb = Platform.OS === 'web';
+    if (isWeb && role === 'EMPLOYEE') {
+      return { success: false, message: 'Personel girişi yalnızca mobil uygulamadan yapılabilir' };
+    }
+    if (!isWeb && role !== 'EMPLOYEE') {
+      return { success: false, message: 'Yönetici ve İK girişi yalnızca web üzerinden yapılabilir' };
+    }
+
+    const me = await apiFetch<CurrentUserDto>('/api/Users/me', { token: login.token });
+
+    return {
+      success: true,
+      token: login.token,
+      user: toAuthUser(me, login.user.isFirstLogin),
+    };
+  } catch (error) {
+    return { success: false, message: getErrorMessage(error) };
+  }
+}
+
+/** POST /api/Auth/change-password — ilk girişte geçici şifreyi değiştirir */
+export async function changePasswordRequest(
+  newPassword: string,
+  confirmPassword: string,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    await apiFetch('/api/Auth/change-password', {
+      method: 'POST',
+      body: { newPassword, confirmPassword },
+    });
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, message: getErrorMessage(error) };
+  }
 }

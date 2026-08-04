@@ -1,193 +1,83 @@
 import { create } from 'zustand';
 
+import { getErrorMessage } from '@/services/api';
+import * as leaveApi from '@/services/leave';
+import { useAuthStore } from '@/store/authStore';
+import { useBranchesStore } from '@/store/branchesStore';
 import { parseDate } from '@/utils/date';
 
 // ─── Types ────────────────────────────────────────────────────────
 export type LeaveStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'AUTO_APPROVED' | 'CANCELED';
-export type LeaveType = 'Yıllık' | 'Sağlık' | 'Mazeret' | 'Acil';
+export type LeaveType = 'Yıllık' | 'Sağlık' | 'Mazeret' | 'Acil' | 'Ücretsiz';
 
 export interface LeaveRequest {
   id: string;
+  userId: string;
+  branchId: string;
   firstName: string;
   lastName: string;
   branch: string;
+  /** Talep sahibinin bu şubedeki yıllık izin hakkı (gün) */
+  annualLeaveCount: number | null;
   leaveType: LeaveType;
-  startDate: string;   // DD.MM.YYYY
-  endDate: string;     // DD.MM.YYYY
+  startDate: string; // DD.MM.YYYY
+  endDate: string; // DD.MM.YYYY
   netDays: number;
   description: string;
+  emergencyContact?: string;
+  leaveAddress?: string;
   status: LeaveStatus;
   processedAt?: string;
-  /**
-   * processedAt'in sıralanabilir hâli. processedAt yerelleştirilmiş bir metin
-   * ("03.08.2026 14:30") olduğu için kendisiyle sıralama yapılamıyor.
-   */
+  /** processedAt'in sıralanabilir hâli (ms) */
   processedTs?: number;
   rejectionReason?: string;
   /** Admin tarafından mı oluşturuldu? */
   createdByAdmin?: boolean;
-  /** Güncelleme yapıldıysa zaman damgası */
-  updatedAt?: string;
 }
 
-/** updateRequest için güncellenebilir alanlar (sadece PENDING izinler) */
-export interface LeaveRequestUpdate {
-  leaveType?: LeaveType;
-  startDate?: string;
-  endDate?: string;
-  netDays?: number;
-  description?: string;
-}
-
-// ─── Initial Mock Data (SRS Senaryoları) ──────────────────────────
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/**
- * Mock geçmişin işlem damgası "şimdi"ye göre üretilir.
- *
- * Sabit tarih yazmak (eskiden 08.2026) uygulamayı o tarihten önce çalıştırınca
- * mock kayıtları geleceğe koyuyordu; geçmiş listesi en yeniden eskiye sıralandığı
- * için kullanıcının az önce onayladığı talep mock'ların ALTINDA kalıyordu.
- */
-function processedDaysAgo(days: number): { processedAt: string; processedTs: number } {
-  const date = new Date(Date.now() - days * DAY_MS);
-  return { processedAt: date.toLocaleString('tr-TR'), processedTs: date.getTime() };
-}
-
-const INITIAL_REQUESTS: LeaveRequest[] = [
-  // Senaryo 1: Bekleyen normal talep
-  {
-    id: 'p1',
-    firstName: 'Ayşe',
-    lastName: 'Yılmaz',
-    branch: 'İstanbul Merkez',
-    leaveType: 'Yıllık',
-    startDate: '12.08.2026',
-    endDate: '15.08.2026',
-    netDays: 4,
-    description: 'Aile tatili için izin talep ediyorum.',
-    status: 'PENDING',
-  },
-  // Senaryo 2: Onaylanmış normal talep
-  {
-    id: 'h1',
-    firstName: 'Fatma',
-    lastName: 'Çelik',
-    branch: 'Ankara Şube',
-    leaveType: 'Yıllık',
-    startDate: '05.08.2026',
-    endDate: '09.08.2026',
-    netDays: 5,
-    description: 'Yaz tatili planım var.',
-    status: 'APPROVED',
-    ...processedDaysAgo(2),
-  },
-  // Senaryo 3: ACİL izin — Sistem tarafından otomatik onaylanmış
-  {
-    id: 'h2',
-    firstName: 'Ali',
-    lastName: 'Öztürk',
-    branch: 'İstanbul Merkez',
-    leaveType: 'Acil',
-    startDate: '01.08.2026',
-    endDate: '02.08.2026',
-    netDays: 2,
-    description: 'Birinci derece yakınımın acil ameliyatı.',
-    status: 'AUTO_APPROVED',
-    ...processedDaysAgo(5),
-  },
-];
+type ActionResult = { ok: boolean; message?: string; request?: LeaveRequest };
 
 // ─── Filtreleme Yardımcıları (Business Rules) ─────────────────────
-// 🚨 KRİTİK KURAL: leaveType === 'Acil' olan kayıtlar status ne olursa olsun
-//    ASLA pending sekmesinde görünemez. Her zaman processed/history'ye düşer.
-//
-// 🔒 ROL BAZLI FİLTRELEME KURALLARI:
-//   - ADMIN  → tüm şubelerin taleplerini görür (şube filtresi uygulanmaz)
-//   - HR     → SADECE kendi şubesindeki (branchName eşleşen) talepleri görür
+// 🚨 KRİTİK KURAL: leaveType === 'Acil' olan kayıtlar backend'de anında
+//    onaylandığı için ASLA pending sekmesinde görünmez; her zaman
+//    işlem görenler listesine düşer.
+// 🔒 Rol/şube kapsamı artık SUNUCUDA uygulanır: HR yalnızca kendi şubesinin,
+//    admin erişebildiği tüm şubelerin taleplerini alır (fetchApproval).
 
-/** Şube bazlı ön filtreleme — rol kurallarını uygular */
-function applyBranchFilter(
-  requests: LeaveRequest[],
-  userRole: 'HR' | 'ADMIN' | string,
-  userBranch: string | null,
-): LeaveRequest[] {
-  // Admin → tüm şubeleri görür, filtre yok
-  if (userRole === 'ADMIN') return requests;
-
-  // HR → sadece kendi şubesi
-  if (userRole === 'HR' && userBranch) {
-    return requests.filter((r) => r.branch === userBranch);
-  }
-
-  // Diğer roller veya şubesi tanımsız HR → boş liste (güvenlik)
-  return [];
+export function filterPendingRequests(requests: LeaveRequest[]): LeaveRequest[] {
+  return requests.filter((r) => r.status === 'PENDING' && r.leaveType !== 'Acil');
 }
 
-export function filterPendingRequests(
-  requests: LeaveRequest[],
-  userRole: string = 'ADMIN',
-  userBranch: string | null = null,
-): LeaveRequest[] {
-  const scoped = applyBranchFilter(requests, userRole, userBranch);
-  return scoped.filter(
-    (r) => r.status === 'PENDING' && r.leaveType !== 'Acil',
-  );
-}
-
-export function filterProcessedRequests(
-  requests: LeaveRequest[],
-  userRole: string = 'ADMIN',
-  userBranch: string | null = null,
-): LeaveRequest[] {
-  const scoped = applyBranchFilter(requests, userRole, userBranch);
-  return scoped
-    .filter((r) => r.status !== 'PENDING' || r.leaveType === 'Acil')
-    // En son işlem gören en üstte
-    .sort((a, b) => (b.processedTs ?? 0) - (a.processedTs ?? 0));
-}
-
-// ─── Bakiye ve çakışma ────────────────────────────────────────────
-// NOT: İzin kayıtlarında userId yok; kişi ad + soyad + şube ile eşleniyor.
-// Backend'e bağlanınca bu eşleme userId'ye çevrilmeli.
-
-function personKey(r: Pick<LeaveRequest, 'firstName' | 'lastName' | 'branch'>): string {
-  return `${r.firstName}|${r.lastName}|${r.branch}`.toLocaleLowerCase('tr-TR');
-}
-
-/**
- * Bir kişinin kendi talepleri — bekleyenler üstte, sonra en son işlem gören.
- * Çalışanın "Taleplerim" listesi bunu kullanır.
- */
-export function filterOwnRequests(
-  requests: LeaveRequest[],
-  owner: Pick<LeaveRequest, 'firstName' | 'lastName' | 'branch'>,
-): LeaveRequest[] {
-  const key = personKey(owner);
-
+export function filterProcessedRequests(requests: LeaveRequest[]): LeaveRequest[] {
   return requests
-    .filter((r) => personKey(r) === key)
-    .sort((a, b) => {
-      const aPending = a.status === 'PENDING' ? 1 : 0;
-      const bPending = b.status === 'PENDING' ? 1 : 0;
-      if (aPending !== bPending) return bPending - aPending;
-      return (b.processedTs ?? 0) - (a.processedTs ?? 0);
-    });
+    .filter((r) => r.status !== 'PENDING' || r.leaveType === 'Acil')
+    // En son işlem gören en üstte; işlem zamanı bilinmeyenlerde yeni kayıt üstte
+    .sort((a, b) => (b.processedTs ?? 0) - (a.processedTs ?? 0) || Number(b.id) - Number(a.id));
+}
+
+/** Çalışanın "Taleplerim" listesi — bekleyenler üstte, sonra en yeni işlem */
+export function sortOwnRequests(requests: LeaveRequest[]): LeaveRequest[] {
+  return [...requests].sort((a, b) => {
+    const aPending = a.status === 'PENDING' ? 1 : 0;
+    const bPending = b.status === 'PENDING' ? 1 : 0;
+    if (aPending !== bPending) return bPending - aPending;
+    return (b.processedTs ?? 0) - (a.processedTs ?? 0) || Number(b.id) - Number(a.id);
+  });
 }
 
 export interface LeaveBalance {
-  /** Şubenin yıllık izin hakkı */
+  /** Kişinin yıllık izin hakkı */
   entitlement: number;
-  /** Onaylanmış yıllık izinlerde geçen gün */
+  /** Onaylanmış izinlerde geçen gün */
   used: number;
   /** Kalan gün (negatife düşmez) */
   remaining: number;
 }
 
 /**
- * Yıllık izin bakiyesi. Sadece 'Yıllık' türü ve onaylanmış (APPROVED /
- * AUTO_APPROVED) kayıtlar düşülür — sağlık/mazeret bakiyeden yemez.
+ * Yıllık izin bakiyesi — hedef talebin yılına bakar. Backend izin limitini
+ * TÜM onaylanmış türler üzerinden düştüğü için burada da tür ayrımı yapılmaz
+ * (yalnızca reddedilen/iptal edilen kayıtlar sayılmaz).
  * Hesaplanan talebin kendisi sayıma dahil edilmez.
  */
 export function calculateLeaveBalance(
@@ -195,14 +85,14 @@ export function calculateLeaveBalance(
   target: LeaveRequest,
   entitlement: number,
 ): LeaveBalance {
-  const key = personKey(target);
+  const targetYear = parseDate(target.startDate)?.getFullYear() ?? new Date().getFullYear();
   let used = 0;
 
   for (const r of requests) {
     if (r.id === target.id) continue;
-    if (personKey(r) !== key) continue;
-    if (r.leaveType !== 'Yıllık') continue;
+    if (r.userId !== target.userId) continue;
     if (r.status !== 'APPROVED' && r.status !== 'AUTO_APPROVED') continue;
+    if (parseDate(r.startDate)?.getFullYear() !== targetYear) continue;
     used += r.netDays;
   }
 
@@ -221,12 +111,10 @@ export function findOverlappingLeaves(
   const end = parseDate(target.endDate);
   if (!start || !end) return [];
 
-  const key = personKey(target);
-
   return requests.filter((r) => {
     if (r.id === target.id) return false;
-    if (r.branch !== target.branch) return false;
-    if (personKey(r) === key) return false;
+    if (r.branchId !== target.branchId) return false;
+    if (r.userId === target.userId) return false;
     if (r.status === 'REJECTED' || r.status === 'CANCELED') return false;
 
     const rStart = parseDate(r.startDate);
@@ -239,139 +127,135 @@ export function findOverlappingLeaves(
 
 // ─── Store ────────────────────────────────────────────────────────
 interface LeaveRequestsState {
-  requests: LeaveRequest[];
+  /** Oturumdaki kullanıcının kendi talepleri (GET /my) */
+  mine: LeaveRequest[];
+  /** İK/Admin onay ekranının kapsamındaki talepler */
+  approval: LeaveRequest[];
+  /** Admin izin yazarken seçilen çalışanın şubesindeki talepler */
+  branchRequests: Record<string, LeaveRequest[]>;
+  loadingMine: boolean;
+  loadingApproval: boolean;
+  mineError: string | null;
+  approvalError: string | null;
 
-  /** Yeni izin talebi ekle. Acil izinler otomatik onaylanır. */
-  addRequest: (request: Omit<LeaveRequest, 'id' | 'status' | 'processedAt'>) => void;
+  fetchMine: () => Promise<void>;
+  /** HR: kendi şubesi; ADMIN: erişebildiği tüm şubeler */
+  fetchApproval: () => Promise<void>;
+  fetchBranchRequests: (branchId: string) => Promise<void>;
 
-  /** Belirtilen izni onayla */
-  approveRequest: (id: string) => void;
-
-  /** Belirtilen izni reddet */
-  rejectRequest: (id: string, reason: string) => void;
-
-  /** Belirtilen izni iptal et (soft-delete — statü CANCELED'a çekilir) */
-  cancelRequest: (id: string) => void;
-
-  /**
-   * Bir talebi verilen anlık görüntüye geri döndürür — toast'taki "Geri al".
-   * İşlemden hemen önceki nesne saklanıp aynen geri yazılır.
-   */
-  restoreRequest: (request: LeaveRequest) => void;
-
-  /**
-   * Bekleyen (PENDING) bir iznin düzenlenebilir alanlarını güncelle.
-   * Kural: Sadece status === 'PENDING' olan izinler güncellenebilir.
-   * Acil türüne geçirilirse otomatik onaylanır.
-   */
-  updateRequest: (id: string, updates: LeaveRequestUpdate) => void;
+  createRequest: (input: leaveApi.CreateLeaveInput) => Promise<ActionResult>;
+  createOnBehalf: (employeeMail: string, input: leaveApi.CreateLeaveInput) => Promise<ActionResult>;
+  approveRequest: (id: string) => Promise<ActionResult>;
+  rejectRequest: (id: string, reason: string) => Promise<ActionResult>;
 }
 
-let _idCounter = 100;
-function generateId(): string {
-  _idCounter += 1;
-  return `lr_${_idCounter}_${Date.now()}`;
+/** approval listesindeki bir kaydı sunucudan dönen haliyle değiştirir */
+function replaceIn(list: LeaveRequest[], updated: LeaveRequest): LeaveRequest[] {
+  return list.map((r) => (r.id === updated.id ? updated : r));
 }
 
-export const useLeaveRequestsStore = create<LeaveRequestsState>((set) => ({
-  requests: INITIAL_REQUESTS,
+export const useLeaveRequestsStore = create<LeaveRequestsState>((set, get) => ({
+  mine: [],
+  approval: [],
+  branchRequests: {},
+  loadingMine: false,
+  loadingApproval: false,
+  mineError: null,
+  approvalError: null,
 
-  addRequest: (request) => {
-    const now = new Date();
-    const isEmergency = request.leaveType === 'Acil';
-    const isAdmin = request.createdByAdmin === true;
-    const processedNow = isEmergency || isAdmin;
-
-    const newRequest: LeaveRequest = {
-      ...request,
-      id: generateId(),
-      // 🚨 ACİL → AUTO_APPROVED, Admin oluşturma → APPROVED, diğer → PENDING
-      status: isEmergency ? 'AUTO_APPROVED' : isAdmin ? 'APPROVED' : 'PENDING',
-      processedAt: processedNow ? now.toLocaleString('tr-TR') : undefined,
-      processedTs: processedNow ? now.getTime() : undefined,
-    };
-
-    set((state) => ({
-      requests: [newRequest, ...state.requests],
-    }));
+  fetchMine: async () => {
+    set({ loadingMine: true, mineError: null });
+    try {
+      const list = await leaveApi.fetchMyRequests();
+      set({ mine: list });
+    } catch (error) {
+      set({ mineError: getErrorMessage(error) });
+    } finally {
+      set({ loadingMine: false });
+    }
   },
 
-  approveRequest: (id) => {
-    const now = new Date();
-    set((state) => ({
-      requests: state.requests.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              status: 'APPROVED' as LeaveStatus,
-              processedAt: now.toLocaleString('tr-TR'),
-              processedTs: now.getTime(),
-            }
-          : r,
-      ),
-    }));
+  fetchApproval: async () => {
+    const user = useAuthStore.getState().user;
+    if (!user) return;
+
+    set({ loadingApproval: true, approvalError: null });
+    try {
+      if (user.role === 'HR') {
+        if (!user.branchId) throw new Error('Şube ataması bulunamadı.');
+        const list = await leaveApi.fetchWorkplaceRequests(user.branchId);
+        set({ approval: list });
+      } else {
+        // Admin: erişilebilir tüm şubelerin talepleri
+        await useBranchesStore.getState().fetchAll();
+        const branches = useBranchesStore.getState().branches;
+        const lists = await Promise.all(
+          branches.map((branch) => leaveApi.fetchWorkplaceRequests(branch.id)),
+        );
+        set({ approval: lists.flat() });
+      }
+    } catch (error) {
+      set({ approvalError: getErrorMessage(error) });
+    } finally {
+      set({ loadingApproval: false });
+    }
   },
 
-  rejectRequest: (id, reason) => {
-    const now = new Date();
-    set((state) => ({
-      requests: state.requests.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              status: 'REJECTED' as LeaveStatus,
-              processedAt: now.toLocaleString('tr-TR'),
-              processedTs: now.getTime(),
-              rejectionReason: reason,
-            }
-          : r,
-      ),
-    }));
+  fetchBranchRequests: async (branchId) => {
+    try {
+      const list = await leaveApi.fetchWorkplaceRequests(branchId);
+      set((state) => ({ branchRequests: { ...state.branchRequests, [branchId]: list } }));
+    } catch {
+      // Bakiye/çakışma bilgilendirmesi içindir; hata akışı bozmasın
+    }
   },
 
-  cancelRequest: (id) => {
-    const now = new Date();
-    set((state) => ({
-      requests: state.requests.map((r) =>
-        r.id === id
-          ? {
-              ...r,
-              status: 'CANCELED' as LeaveStatus,
-              processedAt: now.toLocaleString('tr-TR'),
-              processedTs: now.getTime(),
-            }
-          : r,
-      ),
-    }));
+  createRequest: async (input) => {
+    try {
+      const request = await leaveApi.createLeaveRequest(input);
+      set((state) => ({ mine: [request, ...state.mine] }));
+      return { ok: true, request };
+    } catch (error) {
+      return { ok: false, message: getErrorMessage(error) };
+    }
   },
 
-  restoreRequest: (request) =>
-    set((state) => ({
-      requests: state.requests.map((r) => (r.id === request.id ? request : r)),
-    })),
+  createOnBehalf: async (employeeMail, input) => {
+    try {
+      const request = await leaveApi.createLeaveRequestOnBehalf(employeeMail, input);
+      set((state) => ({
+        approval: [request, ...state.approval.filter((r) => r.id !== request.id)],
+        branchRequests: {
+          ...state.branchRequests,
+          [request.branchId]: [
+            request,
+            ...(state.branchRequests[request.branchId] ?? []).filter((r) => r.id !== request.id),
+          ],
+        },
+      }));
+      return { ok: true, request };
+    } catch (error) {
+      return { ok: false, message: getErrorMessage(error) };
+    }
+  },
 
-  updateRequest: (id, updates) => {
-    const now = new Date();
-    set((state) => ({
-      requests: state.requests.map((r) => {
-        // Güvenlik: Sadece PENDING izinler güncellenebilir
-        if (r.id !== id || r.status !== 'PENDING') return r;
+  approveRequest: async (id) => {
+    try {
+      const updated = await leaveApi.approveLeaveRequest(id);
+      set((state) => ({ approval: replaceIn(state.approval, updated) }));
+      return { ok: true, request: updated };
+    } catch (error) {
+      return { ok: false, message: getErrorMessage(error) };
+    }
+  },
 
-        const updated: LeaveRequest = {
-          ...r,
-          ...updates,
-          updatedAt: now.toLocaleString('tr-TR'),
-        };
-
-        // Eğer tür 'Acil'e değiştirildiyse → otomatik onayla
-        if (updates.leaveType === 'Acil') {
-          updated.status = 'AUTO_APPROVED';
-          updated.processedAt = now.toLocaleString('tr-TR');
-          updated.processedTs = now.getTime();
-        }
-
-        return updated;
-      }),
-    }));
+  rejectRequest: async (id, reason) => {
+    try {
+      const updated = await leaveApi.rejectLeaveRequest(id, reason);
+      set((state) => ({ approval: replaceIn(state.approval, updated) }));
+      return { ok: true, request: updated };
+    } catch (error) {
+      return { ok: false, message: getErrorMessage(error) };
+    }
   },
 }));

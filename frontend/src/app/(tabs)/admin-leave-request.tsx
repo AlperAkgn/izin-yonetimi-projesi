@@ -1,5 +1,5 @@
 import Feather from '@expo/vector-icons/Feather';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, useWindowDimensions, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
@@ -24,7 +24,7 @@ import {
   useLeaveRequestsStore,
 } from '@/store/leaveRequestsStore';
 import { showToast } from '@/store/toastStore';
-import { useUsersStore } from '@/store/usersStore';
+import { getAllLoadedUsers, useUsersStore } from '@/store/usersStore';
 import { countNetWeekdays, formatDate } from '@/utils/date';
 import { normalizePhone } from '@/utils/phone';
 
@@ -130,13 +130,28 @@ export default function AdminLeaveRequestScreen() {
   const { colors } = useDesign();
   const { width } = useWindowDimensions();
 
-  const addRequest = useLeaveRequestsStore((s) => s.addRequest);
-  const allRequests = useLeaveRequestsStore((s) => s.requests);
+  const createOnBehalf = useLeaveRequestsStore((s) => s.createOnBehalf);
+  const branchRequests = useLeaveRequestsStore((s) => s.branchRequests);
+  const fetchBranchRequests = useLeaveRequestsStore((s) => s.fetchBranchRequests);
 
   // Şube adı elle sorulmaz — kayıtlı çalışanın kendi şubesinden türetilir
-  const users = useUsersStore((s) => s.users);
-  const usersDeletedAt = useUsersStore((s) => s.deletedAt);
+  const byBranch = useUsersStore((s) => s.byBranch);
+  const fetchBranchesUsers = useUsersStore((s) => s.fetchBranches);
   const branches = useBranchesStore((s) => s.branches);
+  const fetchAllBranches = useBranchesStore((s) => s.fetchAll);
+
+  // E-posta eşleşmesi için erişilebilir tüm şubelerin personeli yüklenir
+  useEffect(() => {
+    void fetchAllBranches();
+  }, [fetchAllBranches]);
+
+  useEffect(() => {
+    if (branches.length > 0) {
+      void fetchBranchesUsers(branches.map((b) => b.id));
+    }
+  }, [branches, fetchBranchesUsers]);
+
+  const users = useMemo(() => getAllLoadedUsers(byBranch), [byBranch]);
 
   /** Geniş ekranda form + özet paneli, dar ekranda tek kolon kart */
   const split = width >= SPLIT_MIN_WIDTH;
@@ -153,6 +168,7 @@ export default function AdminLeaveRequestScreen() {
   const [phone, setPhone] = useState('');
 
   const [dateError, setDateError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<{
     phone?: string;
     email?: string;
@@ -163,14 +179,19 @@ export default function AdminLeaveRequestScreen() {
   today.setHours(0, 0, 0, 0);
   const netDays = countNetWeekdays(startDate, endDate);
 
-  /** Çalışan e-posta ile eşleştirilir (e-posta sistemde benzersiz) */
+  /**
+   * Çalışan e-posta ile eşleştirilir (e-posta sistemde benzersiz).
+   * Backend on-behalf kaydını yalnızca AKTİF ve PERSONEL rolündeki
+   * kullanıcılar için kabul eder; eşleşme de aynı kurala uyar.
+   */
   const matchedUser = useMemo(() => {
     const mail = email.trim().toLocaleLowerCase('tr-TR');
     if (mail === '') return undefined;
     return users.find(
-      (u) => !(u.id in usersDeletedAt) && u.email.toLocaleLowerCase('tr-TR') === mail,
+      (u) =>
+        u.isActive && u.role === 'EMPLOYEE' && u.email.toLocaleLowerCase('tr-TR') === mail,
     );
-  }, [users, usersDeletedAt, email]);
+  }, [users, email]);
 
   /** İzin kaydına yazılacak şube — eşleşen çalışanın şubesi */
   const resolvedBranch = useMemo(() => {
@@ -178,19 +199,31 @@ export default function AdminLeaveRequestScreen() {
     return branches.find((b) => b.id === matchedUser.branchId)?.name ?? UNKNOWN_BRANCH;
   }, [branches, matchedUser]);
 
-  const entitlement = useMemo(
-    () =>
-      branches.find((b) => b.id === matchedUser?.branchId)?.defaultLeaveDays ?? DEFAULT_LEAVE_DAYS,
-    [branches, matchedUser],
+  /** Kişiye özel yıllık izin hakkı şube atamasıyla birlikte gelir */
+  const entitlement = matchedUser?.annualLeaveCount ?? DEFAULT_LEAVE_DAYS;
+
+  // Bakiye/çakışma bilgilendirmesi için eşleşen çalışanın şubesindeki
+  // talepler sunucudan çekilir
+  const matchedBranchId = matchedUser?.branchId;
+  useEffect(() => {
+    if (matchedBranchId) void fetchBranchRequests(matchedBranchId);
+  }, [matchedBranchId, fetchBranchRequests]);
+
+  const branchRequestList = useMemo(
+    () => (matchedBranchId ? branchRequests[matchedBranchId] ?? [] : []),
+    [branchRequests, matchedBranchId],
   );
 
   /** Bakiye ve çakışma, henüz kaydedilmemiş talep üzerinden hesaplanır */
   const draft = useMemo<LeaveRequest>(
     () => ({
       id: DRAFT_ID,
+      userId: matchedUser?.id ?? '',
+      branchId: matchedUser?.branchId ?? '',
       firstName: matchedUser?.firstName ?? '',
       lastName: matchedUser?.lastName ?? '',
       branch: resolvedBranch,
+      annualLeaveCount: entitlement,
       leaveType: selectedType,
       startDate: formatDate(startDate),
       endDate: formatDate(endDate),
@@ -198,15 +231,18 @@ export default function AdminLeaveRequestScreen() {
       description: '',
       status: 'PENDING',
     }),
-    [matchedUser, resolvedBranch, selectedType, startDate, endDate, netDays],
+    [matchedUser, resolvedBranch, entitlement, selectedType, startDate, endDate, netDays],
   );
 
   const balance = useMemo(
-    () => calculateLeaveBalance(allRequests, draft, entitlement),
-    [allRequests, draft, entitlement],
+    () => calculateLeaveBalance(branchRequestList, draft, entitlement),
+    [branchRequestList, draft, entitlement],
   );
 
-  const overlaps = useMemo(() => findOverlappingLeaves(allRequests, draft), [allRequests, draft]);
+  const overlaps = useMemo(
+    () => findOverlappingLeaves(branchRequestList, draft),
+    [branchRequestList, draft],
+  );
 
   // Çalışan eşleşmediyse şube bilinmiyor; bakiye/çakışma yanıltıcı olur
   const showBalance = matchedUser !== undefined && selectedType === 'Yıllık';
@@ -236,7 +272,7 @@ export default function AdminLeaveRequestScreen() {
     setFieldErrors({});
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
 
@@ -256,33 +292,44 @@ export default function AdminLeaveRequestScreen() {
     const hasError =
       dateMessage !== '' || Object.values(nextFieldErrors).some((m) => m !== undefined);
     // matchedUser kontrolü validateEmail içinde de var; burada tip daraltmak için
-    if (hasError || !matchedUser) return;
+    if (hasError || !matchedUser || submitting) return;
 
     const name = `${matchedUser.firstName} ${matchedUser.lastName}`;
-    const isEmergency = selectedType === 'Acil';
 
-    // Store'a ekle — iş kuralları store içinde uygulanır:
-    //   - Acil → AUTO_APPROVED
-    //   - Admin oluşturma → APPROVED
-    addRequest({
-      firstName: matchedUser.firstName,
-      lastName: matchedUser.lastName,
-      branch: resolvedBranch,
+    // Sunucuya kaydet — iş kuralları backend'de uygulanır:
+    //   - Uygunsa doğrudan APPROVED, limit aşımında REJECTED
+    setSubmitting(true);
+    const result = await createOnBehalf(matchedUser.email, {
       leaveType: selectedType,
-      startDate: formatDate(startDate),
-      endDate: formatDate(endDate),
-      netDays,
-      // Telefon artık izin bilgisi — kayıtta durmazsa girilmesinin anlamı kalmıyor
-      description: `Admin tarafından oluşturuldu. İzin adresi: ${leaveAddress.trim()} · İletişim: ${phone.trim()}`,
-      createdByAdmin: true,
+      startDate,
+      endDate,
+      description: '',
+      emergencyContact: normalizePhone(phone),
+      leaveAddress: leaveAddress.trim(),
     });
+    setSubmitting(false);
 
+    if (!result.ok) {
+      setDateError(result.message ?? 'İzin kaydı oluşturulamadı.');
+      return;
+    }
+
+    const created = result.request!;
     resetForm();
 
-    showToast({
-      message: `${name} adına ${netDays} günlük ${selectedType} izni oluşturuldu.`,
-      tone: isEmergency ? 'danger' : 'success',
-    });
+    if (created.status === 'REJECTED') {
+      showToast({
+        message:
+          created.rejectionReason ??
+          `${name} — izin hakkı aşıldığı için kayıt reddedildi.`,
+        tone: 'danger',
+      });
+    } else {
+      showToast({
+        message: `${name} adına ${created.netDays} günlük ${created.leaveType} izni oluşturuldu ve onaylandı.`,
+        tone: created.status === 'AUTO_APPROVED' ? 'danger' : 'success',
+      });
+    }
   };
 
   const divider = <View style={[styles.divider, { backgroundColor: colors.border }]} />;
@@ -575,7 +622,7 @@ export default function AdminLeaveRequestScreen() {
 
       {divider}
 
-      <Button label="Talebi Oluştur" onPress={handleSubmit} />
+      <Button label="Talebi Oluştur" onPress={handleSubmit} loading={submitting} />
       <Button label="Formu Temizle" onPress={resetForm} variant="ghost" />
 
       <View style={styles.footerHint}>
@@ -646,7 +693,7 @@ export default function AdminLeaveRequestScreen() {
                   <Button label="Formu Temizle" onPress={resetForm} variant="ghost" />
                 </View>
                 <View style={stackFields ? styles.footerButtonFlex : styles.footerButton}>
-                  <Button label="Talebi Oluştur" onPress={handleSubmit} />
+                  <Button label="Talebi Oluştur" onPress={handleSubmit} loading={submitting} />
                 </View>
               </View>
             </View>

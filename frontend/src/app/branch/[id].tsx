@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
-import { ScrollView, Pressable, StyleSheet, TextInput, View } from 'react-native';
-import { useLocalSearchParams, Stack } from 'expo-router';
+import { useCallback, useEffect, useState } from 'react';
+import { ScrollView, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { useLocalSearchParams, Stack, useFocusEffect } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 
 import { ThemedText } from '@/components/themed-text';
@@ -12,6 +12,7 @@ import { useDesign } from '@/hooks/use-design';
 import { Radius, Space } from '@/constants/design';
 import { showConfirm } from '@/utils/alert';
 import { normalizePhone } from '@/utils/phone';
+import { showToast } from '@/store/toastStore';
 import { useBranchesStore } from '@/store/branchesStore';
 import { useUsersStore, getBranchUsers, AppUser, UserRole } from '@/store/usersStore';
 
@@ -32,22 +33,32 @@ function CreateStaffForm({ branchId, onDone }: { branchId: string; onDone: () =>
   const [phone, setPhone] = useState('');
   const [role, setRole] = useState<UserRole>('EMPLOYEE');
   const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (firstName.trim().length === 0) return setError('İsim boş olamaz');
     if (lastName.trim().length === 0) return setError('Soyisim boş olamaz');
     if (!EMAIL_REGEX.test(email)) return setError('Geçerli bir e-posta gir');
     if (!isValidPhone(phone)) return setError('Geçerli bir telefon numarası gir');
     setError('');
-    const result = addUser({
+
+    setSaving(true);
+    const result = await addUser(branchId, {
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       email: email.trim(),
       phone: phone.trim(),
       role,
-      branchId,
     });
+    setSaving(false);
+
     if (!result.ok) return setError(result.message ?? 'Eklenemedi');
+
+    // Şifre backend'de üretilir ve kullanıcıya e-postayla gider
+    showToast({
+      message: `${firstName.trim()} için hesap oluşturuldu — geçici şifre e-postayla gönderildi.`,
+      tone: 'success',
+    });
     onDone();
   };
 
@@ -76,8 +87,12 @@ function CreateStaffForm({ branchId, onDone }: { branchId: string; onDone: () =>
         })}
       </View>
 
+      <ThemedText style={[styles.hint, { color: colors.textFaint }]}>
+        Şifre sorulmaz — sistem geçici şifre üretip personelin e-postasına gönderir, ilk girişte değiştirtilir.
+      </ThemedText>
+
       {error !== '' && <ThemedText style={{ color: colors.danger, fontSize: 13 }}>{error}</ThemedText>}
-      <Button label="Personeli Oluştur" onPress={handleSave} />
+      <Button label="Personeli Oluştur" onPress={handleSave} loading={saving} />
       <Button label="Vazgeç" onPress={onDone} variant="ghost" />
     </Card>
   );
@@ -87,11 +102,24 @@ function CreateStaffForm({ branchId, onDone }: { branchId: string; onDone: () =>
 function MoveStaffForm({ user, currentBranchId, onDone }: { user: AppUser; currentBranchId: string; onDone: () => void }) {
   const { colors } = useDesign();
   const branches = useBranchesStore((s) => s.branches);
-  const deletedBranches = useBranchesStore((s) => s.deletedAt);
   const moveToBranch = useUsersStore((s) => s.moveToBranch);
+  const [moving, setMoving] = useState(false);
 
-  // Silinmemiş ve mevcut olmayan şubeler
-  const targets = branches.filter((b) => b.id !== currentBranchId && !(b.id in deletedBranches));
+  const targets = branches.filter((b) => b.id !== currentBranchId);
+
+  const handleMove = async (targetBranchId: string) => {
+    if (moving) return;
+    setMoving(true);
+    const result = await moveToBranch(user.id, currentBranchId, targetBranchId);
+    setMoving(false);
+
+    if (!result.ok) {
+      showToast({ message: result.message ?? 'Personel taşınamadı.', tone: 'danger' });
+      return;
+    }
+    showToast({ message: `${user.firstName} ${user.lastName} taşındı.`, tone: 'success' });
+    onDone();
+  };
 
   return (
     <Card>
@@ -106,10 +134,7 @@ function MoveStaffForm({ user, currentBranchId, onDone }: { user: AppUser; curre
         targets.map((b) => (
           <Pressable
             key={b.id}
-            onPress={() => {
-              moveToBranch(user.id, b.id);
-              onDone();
-            }}
+            onPress={() => void handleMove(b.id)}
             style={({ pressed }) => [styles.pickRow, { borderColor: colors.border, backgroundColor: pressed ? colors.surfaceRaised : 'transparent' }]}>
             <View style={styles.pickBody}>
               <ThemedText style={styles.pickName}>{b.name}</ThemedText>
@@ -135,9 +160,19 @@ function PersonRow({ user, onMove, onDelete }: { user: AppUser; onMove: () => vo
           <ThemedText style={[styles.avatarText, { color: colors.primary }]}>{initials}</ThemedText>
         </View>
         <View style={styles.personBody}>
-          <ThemedText style={styles.personName}>{user.firstName} {user.lastName}</ThemedText>
+          <View style={styles.personNameRow}>
+            <ThemedText style={styles.personName}>{user.firstName} {user.lastName}</ThemedText>
+            {/* Girişi kapatılmış kullanıcı — silinmiş değil, listede kalır */}
+            {!user.isActive && (
+              <View style={[styles.inactiveTag, { backgroundColor: colors.surfaceRaised }]}>
+                <ThemedText style={[styles.inactiveTagText, { color: colors.textMuted }]}>
+                  Pasif
+                </ThemedText>
+              </View>
+            )}
+          </View>
           <ThemedText style={[styles.personDetail, { color: colors.textMuted }]} numberOfLines={1}>
-            {user.email}
+            {user.email} · {user.annualLeaveCount} gün izin
           </ThemedText>
         </View>
         <Pressable onPress={onMove} style={styles.iconBtn}>
@@ -158,23 +193,49 @@ export default function BranchDetailScreen() {
   const { colors } = useDesign();
   const { id } = useLocalSearchParams<{ id: string }>();
   const branches = useBranchesStore((s) => s.branches);
-  const users = useUsersStore((s) => s.users);
-  const usersDeletedAt = useUsersStore((s) => s.deletedAt);
+  const fetchAllBranches = useBranchesStore((s) => s.fetchAll);
+  const byBranch = useUsersStore((s) => s.byBranch);
+  const loading = useUsersStore((s) => s.loading);
+  const usersError = useUsersStore((s) => s.error);
+  const fetchBranch = useUsersStore((s) => s.fetchBranch);
   const deleteUser = useUsersStore((s) => s.deleteUser);
 
   const [mode, setMode] = useState<Mode>('view');
 
+  // Doğrudan URL ile gelinirse şube listesi henüz yüklenmemiş olabilir
+  useEffect(() => {
+    void fetchAllBranches();
+  }, [fetchAllBranches]);
+
+  // Silinenler'den geri alma sonrası dönüşte liste güncel olsun
+  useFocusEffect(
+    useCallback(() => {
+      void fetchBranch(id);
+    }, [id, fetchBranch]),
+  );
+
   const branch = branches.find((b) => b.id === id);
-  const branchUsers = getBranchUsers(users, usersDeletedAt, id);
+  const branchUsers = getBranchUsers(byBranch, id);
   const hrUsers = branchUsers.filter((u) => u.role === 'HR');
   const employeeUsers = branchUsers.filter((u) => u.role === 'EMPLOYEE');
 
   const handleDelete = (user: AppUser) => {
     showConfirm(
       'Personeli Sil',
-      `${user.firstName} ${user.lastName} silinecek. 24 saat boyunca "Silinenler" bölümünden geri alınabilir. Emin misin?`,
+      `${user.firstName} ${user.lastName} silinecek: sisteme girişi kapanır, listelerde görünmez. Şubeler ekranındaki "Silinenler" bölümünden istediğin zaman geri alabilirsin. Emin misin?`,
       'Sil',
-      () => deleteUser(user.id)
+      () => {
+        void deleteUser(user.id, id).then((result) => {
+          if (!result.ok) {
+            showToast({ message: result.message ?? 'Personel silinemedi.', tone: 'danger' });
+          } else {
+            showToast({
+              message: `${user.firstName} ${user.lastName} silindi — Silinenler'den geri alınabilir.`,
+              tone: 'info',
+            });
+          }
+        });
+      }
     );
   };
 
@@ -219,7 +280,11 @@ export default function BranchDetailScreen() {
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
       {header}
-      <ScrollView contentContainerStyle={styles.scrollContent}>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl refreshing={loading} onRefresh={() => void fetchBranch(id)} />
+        }>
         <View style={styles.contentWrap}>
           {branch && (
             <View style={[styles.infoPill, { backgroundColor: colors.primarySoft }]}>
@@ -227,6 +292,10 @@ export default function BranchDetailScreen() {
                 Yıllık izin hakkı: {branch.defaultLeaveDays} gün · {branch.email}
               </ThemedText>
             </View>
+          )}
+
+          {usersError && (
+            <ThemedText style={{ color: colors.danger, fontSize: 13 }}>{usersError}</ThemedText>
           )}
 
           <Button label="+ Yeni Personel Oluştur" onPress={() => setMode('create')} />
@@ -252,6 +321,7 @@ export default function BranchDetailScreen() {
               ))
             )}
           </View>
+
         </View>
       </ScrollView>
     </View>
@@ -271,6 +341,7 @@ const styles = StyleSheet.create({
   roleLabel: { fontSize: 13, fontWeight: '600', marginTop: Space.xs },
   roleRow: { flexDirection: 'row', gap: Space.sm },
   roleChip: { flex: 1, borderWidth: 1, borderRadius: Radius.md, paddingVertical: 12, alignItems: 'center' },
+  hint: { fontSize: 12, lineHeight: 17 },
   pickRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, borderWidth: 1, borderRadius: Radius.md, padding: Space.md, marginBottom: Space.sm },
   pickBody: { flex: 1, gap: 2 },
   pickName: { fontSize: 14, fontWeight: '600' },
@@ -279,7 +350,10 @@ const styles = StyleSheet.create({
   avatar: { width: 44, height: 44, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontWeight: '700', fontSize: 15 },
   personBody: { flex: 1, gap: 2, marginLeft: Space.xs },
+  personNameRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
   personName: { fontSize: 15, fontWeight: '600' },
   personDetail: { fontSize: 12 },
+  inactiveTag: { paddingHorizontal: Space.sm, paddingVertical: 2, borderRadius: Radius.pill },
+  inactiveTagText: { fontSize: 11, fontWeight: '600' },
   iconBtn: { padding: Space.sm },
 });

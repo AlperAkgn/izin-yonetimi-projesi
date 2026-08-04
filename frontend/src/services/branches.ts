@@ -1,13 +1,9 @@
+import { apiFetch } from '@/services/api';
+
 /**
- * ŞUBE YÖNETİMİ — BACKEND NOTLARI
- * - GET /branches (Admin: hepsi; HR: sadece kendi şubesi)
- * - POST /branches { name, city, address, phone }
- * - POST /branches/:id/hr { firstName, lastName, email, phone } → yeni HR kullanıcısı
- *   oluşturur (şartname 3.4: OTP üretilip ilk girişte şifre değiştirtilecek)
- * - DELETE /branches/:id → SOFT DELETE (şartname 4.1: fiziksel DELETE yasak,
- *   deleted_at işaretlenmeli). Şubeye bağlı kullanıcı/izin kayıtlarının ne olacağı
- *   (aktarım mı, pasifleştirme mi) 
- * - Tüm bu endpoint'ler SADECE Admin rolüne açık olmalı (server-side guard).
+ * ŞUBE (WORKPLACE) SERVİSİ — /api/Workplaces
+ * Backend "workplace" der, arayüz "şube" der; alan adları burada eşlenir.
+ * Tüm endpoint'ler yalnızca ADMIN rolüne açıktır (server-side guard mevcut).
  */
 
 export type Branch = {
@@ -17,12 +13,83 @@ export type Branch = {
   address: string;
   phone: string;
   email: string;
-  defaultLeaveDays: number; // şube geneli yıllık izin hakkı
+  /** Şube geneli yıllık izin hakkı (yeni personelin varsayılanı) */
+  defaultLeaveDays: number;
+  isActive: boolean;
+  /** Yalnızca silinenler listesinde dolu gelir (ISO) */
+  deletedAt: string | null;
 };
 
-export const DEFAULT_LEAVE_DAYS = 15; // null/boş girilirse bu değer
+export type BranchInput = Omit<Branch, 'id' | 'isActive' | 'deletedAt'>;
 
-export const MOCK_BRANCHES: Branch[] = [
-  { id: 'b1', name: 'İstanbul Merkez', city: 'İstanbul', address: 'Levent Mah. İş Kuleleri No:1', phone: '0212 000 00 00', email: 'istanbul@permitflow.com', defaultLeaveDays: 15 },
-  { id: 'b2', name: 'Ankara Şube', city: 'Ankara', address: 'Çankaya Cad. No:42', phone: '0312 000 00 00', email: 'ankara@permitflow.com', defaultLeaveDays: 20 },
-];
+export const DEFAULT_LEAVE_DAYS = 15; // null/boş girilirse backend varsayılanı
+
+type WorkplaceDto = {
+  id: number;
+  name: string;
+  address: string;
+  city: string;
+  phoneNumber: string;
+  mail: string;
+  isActive: boolean;
+  leaveCount: number;
+  deletedAt?: string | null;
+};
+
+function toBranch(dto: WorkplaceDto): Branch {
+  return {
+    id: String(dto.id),
+    name: dto.name,
+    city: dto.city,
+    address: dto.address,
+    phone: dto.phoneNumber,
+    email: dto.mail,
+    defaultLeaveDays: dto.leaveCount,
+    isActive: dto.isActive,
+    deletedAt: dto.deletedAt ?? null,
+  };
+}
+
+function toPayload(data: BranchInput) {
+  return {
+    name: data.name,
+    address: data.address,
+    city: data.city,
+    phoneNumber: data.phone,
+    mail: data.email,
+    leaveCount: data.defaultLeaveDays,
+  };
+}
+
+export async function fetchBranches(): Promise<Branch[]> {
+  const list = await apiFetch<WorkplaceDto[]>('/api/Workplaces');
+  return list.map(toBranch);
+}
+
+export async function fetchDeletedBranches(): Promise<Branch[]> {
+  const list = await apiFetch<WorkplaceDto[]>('/api/Workplaces/deleted');
+  return list.map(toBranch);
+}
+
+export async function createBranch(data: BranchInput): Promise<Branch> {
+  const dto = await apiFetch<WorkplaceDto>('/api/Workplaces', { method: 'POST', body: toPayload(data) });
+  return toBranch(dto);
+}
+
+export async function updateBranch(id: string, data: BranchInput): Promise<Branch> {
+  const dto = await apiFetch<WorkplaceDto>(`/api/Workplaces/${id}`, {
+    method: 'PUT',
+    body: { ...toPayload(data), isActive: true },
+  });
+  return toBranch(dto);
+}
+
+/** Soft delete — backend 30 gün sonra kalıcı temizler */
+export async function deleteBranch(id: string): Promise<void> {
+  await apiFetch<void>(`/api/Workplaces/${id}`, { method: 'DELETE' });
+}
+
+export async function restoreBranch(id: string): Promise<Branch> {
+  const dto = await apiFetch<WorkplaceDto>(`/api/Workplaces/${id}/restore`, { method: 'POST' });
+  return toBranch(dto);
+}

@@ -2,10 +2,11 @@ import Feather from '@expo/vector-icons/Feather';
 import * as DocumentPicker from 'expo-document-picker';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
     FlatList,
     KeyboardAvoidingView,
+    Linking,
     Platform,
     Pressable,
     StyleSheet,
@@ -17,7 +18,7 @@ import { ThemedText } from '@/components/themed-text';
 import { BackButton } from '@/components/ui/back-button';
 import { Radius, Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
-import { Attachment, MAX_FILE_BYTES, Message } from '@/services/messages';
+import { MAX_FILE_BYTES, Message, PickedFile } from '@/services/messages';
 import { useMessagesStore } from '@/store/messagesStore';
 import { showAlert } from '@/utils/alert';
 
@@ -27,27 +28,39 @@ export default function ChatScreen() {
   const conversations = useMessagesStore((s) => s.conversations);
   const conversation = conversations.find((c) => c.id === id);
   const messages = useMessagesStore((s) => s.messagesByConv[id] ?? []);
-  const storeSend = useMessagesStore((s) => s.sendMessage);
+  const openConversation = useMessagesStore((s) => s.openConversation);
+  const setActiveConversation = useMessagesStore((s) => s.setActiveConversation);
+  const sendMessage = useMessagesStore((s) => s.sendMessage);
+  const connected = useMessagesStore((s) => s.connected);
+
   const [text, setText] = useState('');
-  const [pendingAttachment, setPendingAttachment] = useState<Attachment | null>(null);
+  const [pendingFile, setPendingFile] = useState<PickedFile | null>(null);
+  const [sending, setSending] = useState(false);
 
-  const sendMessage = () => {
-    if (text.trim().length === 0 && !pendingAttachment) return;
+  // Geçmiş sunucudan yüklenir; ekran açıkken gelen mesajlar rozet artırmaz
+  useEffect(() => {
+    setActiveConversation(id);
+    void openConversation(id);
+    return () => setActiveConversation(null);
+  }, [id, openConversation, setActiveConversation]);
 
-    // OPTIMISTIC UPDATE: mesajı hemen ekrana ekliyoruz.
-    // Backend ekibine not: gerçekte burada socket.emit('message:send', ...) olacak,
-    // sunucudan 'message:sent' onayı gelince tempId gerçek id ile değişecek.
-    const newMessage: Message = {
-      id: `temp-${Date.now()}`,
-      conversationId: id,
-      senderId: 'me',
-      text: text.trim(),
-      attachment: pendingAttachment ?? undefined,
-      createdAt: new Date().toISOString(),
-    };
-    storeSend(id, newMessage);
+  const handleSend = async () => {
+    if (sending) return;
+    const trimmed = text.trim();
+    if (trimmed.length === 0 && !pendingFile) return;
+
+    setSending(true);
+    // Dosya önce REST ile yüklenir, mesaj STOMP üzerinden ek id'siyle gider;
+    // sunucu mesajı bize de yayınladığı için liste kendiliğinden güncellenir.
+    const result = await sendMessage(id, trimmed, pendingFile ?? undefined);
+    setSending(false);
+
+    if (!result.ok) {
+      showAlert('Mesaj gönderilemedi', result.message ?? 'Bilinmeyen bir hata oluştu.');
+      return;
+    }
     setText('');
-    setPendingAttachment(null);
+    setPendingFile(null);
   };
 
   const pickImage = async () => {
@@ -59,10 +72,10 @@ export default function ChatScreen() {
       showAlert('Dosya çok büyük', 'Maksimum dosya boyutu 5MB olabilir.');
       return;
     }
-    setPendingAttachment({
-      name: asset.fileName ?? 'görsel.jpg',
+    setPendingFile({
       uri: asset.uri,
-      type: 'image',
+      name: asset.fileName ?? 'görsel.jpg',
+      mimeType: asset.mimeType ?? 'image/jpeg',
       sizeBytes: size,
     });
   };
@@ -76,12 +89,19 @@ export default function ChatScreen() {
       showAlert('Dosya çok büyük', 'Maksimum dosya boyutu 5MB olabilir.');
       return;
     }
-    setPendingAttachment({
-      name: asset.name,
+    setPendingFile({
       uri: asset.uri,
-      type: 'file',
+      name: asset.name,
+      mimeType: asset.mimeType ?? 'application/octet-stream',
       sizeBytes: size,
     });
+  };
+
+  /** Ek, token'lı indirme bağlantısıyla açılır (backend query token kabul eder) */
+  const openAttachment = (uri: string) => {
+    void Linking.openURL(uri).catch(() =>
+      showAlert('Dosya açılamadı', 'Bağlantı tarayıcıda açılamadı, tekrar dene.'),
+    );
   };
 
   const renderMessage = ({ item }: { item: Message }) => {
@@ -96,18 +116,23 @@ export default function ChatScreen() {
               : { backgroundColor: colors.surfaceRaised, borderBottomLeftRadius: 4 },
           ]}>
           {item.attachment && (
-            <View style={[styles.attachmentChip, { borderColor: mine ? 'rgba(255,255,255,0.3)' : colors.border }]}>
+            <Pressable
+              onPress={() => openAttachment(item.attachment!.uri)}
+              accessibilityRole="button"
+              accessibilityLabel={`${item.attachment.name} dosyasını aç`}
+              style={[styles.attachmentChip, { borderColor: mine ? 'rgba(255,255,255,0.3)' : colors.border }]}>
               <Feather
                 name={item.attachment.type === 'image' ? 'image' : 'file'}
                 size={14}
                 color={mine ? '#fff' : colors.textMuted}
               />
               <ThemedText
-                style={{ color: mine ? '#fff' : colors.text, fontSize: 13 }}
+                style={{ color: mine ? '#fff' : colors.text, fontSize: 13, flexShrink: 1 }}
                 numberOfLines={1}>
                 {item.attachment.name}
               </ThemedText>
-            </View>
+              <Feather name="download" size={13} color={mine ? '#fff' : colors.textMuted} />
+            </Pressable>
           )}
           {item.text.length > 0 && (
             <ThemedText style={{ color: mine ? '#fff' : colors.text, fontSize: 15 }}>
@@ -135,6 +160,15 @@ export default function ChatScreen() {
         style={styles.flex}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={90}>
+        {!connected && (
+          <View style={[styles.offlineBar, { backgroundColor: `${colors.danger}18` }]}>
+            <Feather name="wifi-off" size={13} color={colors.danger} />
+            <ThemedText style={[styles.offlineText, { color: colors.danger }]}>
+              Mesaj sunucusuna bağlanılıyor...
+            </ThemedText>
+          </View>
+        )}
+
         <FlatList
           data={messages}
           keyExtractor={(m) => m.id}
@@ -142,17 +176,17 @@ export default function ChatScreen() {
           contentContainerStyle={styles.messageList}
         />
 
-        {pendingAttachment && (
+        {pendingFile && (
           <View style={[styles.pendingBar, { backgroundColor: colors.surfaceRaised, borderColor: colors.border }]}>
             <Feather
-              name={pendingAttachment.type === 'image' ? 'image' : 'file'}
+              name={pendingFile.mimeType.startsWith('image/') ? 'image' : 'file'}
               size={16}
               color={colors.primary}
             />
             <ThemedText style={{ flex: 1, fontSize: 13 }} numberOfLines={1}>
-              {pendingAttachment.name}
+              {pendingFile.name}
             </ThemedText>
-            <Pressable onPress={() => setPendingAttachment(null)}>
+            <Pressable onPress={() => setPendingFile(null)}>
               <Feather name="x" size={18} color={colors.textMuted} />
             </Pressable>
           </View>
@@ -176,12 +210,17 @@ export default function ChatScreen() {
               const native = e.nativeEvent as unknown as { key?: string; shiftKey?: boolean };
               if (native.key === 'Enter' && !native.shiftKey) {
                 e.preventDefault?.();
-                sendMessage();
+                void handleSend();
               }
             }}
             blurOnSubmit={false}
           />
-          <Pressable onPress={sendMessage} style={[styles.sendButton, { backgroundColor: colors.primary }]}>
+          <Pressable
+            onPress={() => void handleSend()}
+            style={[
+              styles.sendButton,
+              { backgroundColor: sending ? colors.textFaint : colors.primary },
+            ]}>
             <Feather name="send" size={18} color="#fff" />
           </Pressable>
         </View>
@@ -211,6 +250,14 @@ const styles = StyleSheet.create({
     paddingHorizontal: Space.sm,
     paddingVertical: 6,
   },
+  offlineBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Space.xs,
+    paddingVertical: 6,
+  },
+  offlineText: { fontSize: 12, fontWeight: '600' },
   pendingBar: {
     flexDirection: 'row',
     alignItems: 'center',

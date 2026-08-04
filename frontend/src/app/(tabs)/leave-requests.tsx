@@ -1,8 +1,9 @@
 import Feather from '@expo/vector-icons/Feather';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   FlatList,
   Pressable,
+  RefreshControl,
   ScrollView,
   StyleSheet,
   useWindowDimensions,
@@ -26,11 +27,9 @@ import { LEAVE_TYPES, leaveTypeEmoji, statusMeta } from '@/constants/leave';
 import { useDesign } from '@/hooks/use-design';
 import { DEFAULT_LEAVE_DAYS } from '@/services/branches';
 import { useAuthStore } from '@/store/authStore';
-import { useBranchesStore } from '@/store/branchesStore';
 import {
   calculateLeaveBalance,
-  filterOwnRequests,
-  findOverlappingLeaves,
+  sortOwnRequests,
   useLeaveRequestsStore,
 } from '@/store/leaveRequestsStore';
 import { showToast } from '@/store/toastStore';
@@ -166,10 +165,17 @@ export default function LeaveRequestsScreen() {
 
   const [tab, setTab] = useState<Tab>('new');
 
-  const addRequest = useLeaveRequestsStore((s) => s.addRequest);
-  const allRequests = useLeaveRequestsStore((s) => s.requests);
+  const createRequest = useLeaveRequestsStore((s) => s.createRequest);
+  const mine = useLeaveRequestsStore((s) => s.mine);
+  const fetchMine = useLeaveRequestsStore((s) => s.fetchMine);
+  const loadingMine = useLeaveRequestsStore((s) => s.loadingMine);
+  const mineError = useLeaveRequestsStore((s) => s.mineError);
   const authUser = useAuthStore((s) => s.user);
-  const branches = useBranchesStore((s) => s.branches);
+
+  // Talepler sunucudan gelir (GET /api/LeaveRequests/my)
+  useEffect(() => {
+    void fetchMine();
+  }, [fetchMine]);
 
   const [selectedType, setSelectedType] = useState<LeaveType>('Yıllık');
   const [startDate, setStartDate] = useState(new Date());
@@ -177,6 +183,7 @@ export default function LeaveRequestsScreen() {
   const [description, setDescription] = useState('');
   const [emergencyContact, setEmergencyContact] = useState('');
   const [leaveAddress, setLeaveAddress] = useState('');
+  const [submitting, setSubmitting] = useState(false);
 
   const [dateError, setDateError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<{
@@ -189,26 +196,21 @@ export default function LeaveRequestsScreen() {
   today.setHours(0, 0, 0, 0);
   const netDays = countNetWeekdays(startDate, endDate);
 
-  // İzin kayıtları kişiyi ad + soyad + şube ile tutuyor
-  const firstName = authUser?.name?.split(' ')[0] ?? 'Bilinmeyen';
-  const lastName = authUser?.name?.split(' ').slice(1).join(' ') ?? '';
-  const branchName = authUser?.branchName ?? 'Bilinmeyen Şube';
+  /** Yıllık izin hakkı /api/Users/me'den gelir; yoksa sistem varsayılanı */
+  const entitlement = authUser?.entitlement ?? DEFAULT_LEAVE_DAYS;
 
-  const entitlement =
-    branches.find((b) => b.id === authUser?.branchId)?.defaultLeaveDays ?? DEFAULT_LEAVE_DAYS;
+  const myRequests = useMemo(() => sortOwnRequests(mine), [mine]);
 
-  const myRequests = useMemo(
-    () => filterOwnRequests(allRequests, { firstName, lastName, branch: branchName }),
-    [allRequests, firstName, lastName, branchName],
-  );
-
-  /** Bakiye ve çakışma hesapları henüz kaydedilmemiş talep üzerinden yapılır */
+  /** Bakiye hesabı henüz kaydedilmemiş talep üzerinden yapılır */
   const draft = useMemo<LeaveRequest>(
     () => ({
       id: DRAFT_ID,
-      firstName,
-      lastName,
-      branch: branchName,
+      userId: authUser?.id ?? '',
+      branchId: authUser?.branchId ?? '',
+      firstName: '',
+      lastName: '',
+      branch: authUser?.branchName ?? '',
+      annualLeaveCount: entitlement,
       leaveType: selectedType,
       startDate: formatDate(startDate),
       endDate: formatDate(endDate),
@@ -216,16 +218,16 @@ export default function LeaveRequestsScreen() {
       description: '',
       status: 'PENDING',
     }),
-    [firstName, lastName, branchName, selectedType, startDate, endDate, netDays],
+    [authUser, entitlement, selectedType, startDate, endDate, netDays],
   );
 
   const balance = useMemo(
-    () => calculateLeaveBalance(allRequests, draft, entitlement),
-    [allRequests, draft, entitlement],
+    () => calculateLeaveBalance(mine, draft, entitlement),
+    [mine, draft, entitlement],
   );
 
-  const overlaps = useMemo(() => findOverlappingLeaves(allRequests, draft), [allRequests, draft]);
-
+  // Backend izin limitini tüm onaylı türler üzerinden düşer; bakiye şeridi
+  // yine de öncelikle yıllık izinde gösterilir (diğerleri istisnai durumlar)
   const consumesBalance = selectedType === 'Yıllık';
   const afterRequest = Math.max(balance.remaining - netDays, 0);
   const exceedsBalance = consumesBalance && netDays > balance.remaining;
@@ -255,7 +257,7 @@ export default function LeaveRequestsScreen() {
     setFieldErrors({});
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     const start = new Date(startDate);
     start.setHours(0, 0, 0, 0);
 
@@ -274,32 +276,47 @@ export default function LeaveRequestsScreen() {
 
     const hasError =
       dateMessage !== '' || Object.values(nextFieldErrors).some((m) => m !== undefined);
-    if (hasError) return;
+    if (hasError || submitting) return;
 
-    addRequest({
-      firstName,
-      lastName,
-      branch: branchName,
+    setSubmitting(true);
+    const result = await createRequest({
       leaveType: selectedType,
-      startDate: formatDate(startDate),
-      endDate: formatDate(endDate),
-      netDays,
+      startDate,
+      endDate,
       description: description.trim(),
-      createdByAdmin: false,
+      emergencyContact: normalizePhone(emergencyContact),
+      leaveAddress: leaveAddress.trim(),
     });
+    setSubmitting(false);
 
-    const isEmergency = selectedType === 'Acil';
+    // Sunucu reddederse (tarih çakışması, iş günü yok vb.) form olduğu
+    // gibi kalır — kullanıcı düzeltip tekrar gönderebilsin.
+    if (!result.ok) {
+      setDateError(result.message ?? 'Talep oluşturulamadı.');
+      return;
+    }
+
+    const created = result.request!;
     resetForm();
     // Gönderdikten sonra listeye geçiyoruz: talep gerçekten kaydedildi mi
     // sorusunun cevabı hemen ekranda olsun.
     setTab('mine');
 
-    showToast({
-      message: isEmergency
-        ? `${netDays} günlük acil izin oluşturuldu ve otomatik onaylandı.`
-        : `${netDays} günlük ${selectedType} talebin onaya gönderildi.`,
-      tone: isEmergency ? 'danger' : 'success',
-    });
+    if (created.status === 'REJECTED') {
+      // Backend limit aşımını kayıt anında reddeder (kayıt yine oluşur)
+      showToast({
+        message: created.rejectionReason ?? 'Talep, izin hakkını aştığı için reddedildi.',
+        tone: 'danger',
+      });
+    } else {
+      showToast({
+        message:
+          created.status === 'AUTO_APPROVED'
+            ? `${created.netDays} günlük acil izin oluşturuldu ve otomatik onaylandı.`
+            : `${created.netDays} günlük ${created.leaveType} talebin onaya gönderildi.`,
+        tone: created.status === 'AUTO_APPROVED' ? 'danger' : 'success',
+      });
+    }
   };
 
   const balanceStrip = (
@@ -450,13 +467,6 @@ export default function LeaveRequestsScreen() {
                 />
               )}
 
-              {overlaps.length > 0 && (
-                <Notice
-                  icon="users"
-                  color={colors.warning}
-                  text={`Bu tarihlerde şubenden ${overlaps.length} kişi daha izinli — onay gecikebilir.`}
-                />
-              )}
             </View>
           </Card>
 
@@ -554,7 +564,7 @@ export default function LeaveRequestsScreen() {
                 // Telefonda yan yana iki düğme dar kalıyor — asıl eylem üstte,
                 // tam genişlikte; temizle altında ikincil olarak duruyor
                 <View style={styles.footerActionsStacked}>
-                  <Button label="Talebi Gönder" onPress={handleSubmit} />
+                  <Button label="Talebi Gönder" onPress={handleSubmit} loading={submitting} />
                   <Button label="Formu Temizle" onPress={resetForm} variant="ghost" />
                 </View>
               ) : (
@@ -563,7 +573,7 @@ export default function LeaveRequestsScreen() {
                     <Button label="Formu Temizle" onPress={resetForm} variant="ghost" />
                   </View>
                   <View style={stackFields ? styles.footerButtonFlex : styles.footerButton}>
-                    <Button label="Talebi Gönder" onPress={handleSubmit} />
+                    <Button label="Talebi Gönder" onPress={handleSubmit} loading={submitting} />
                   </View>
                 </View>
               )}
@@ -577,12 +587,22 @@ export default function LeaveRequestsScreen() {
           renderItem={({ item, index }) => <MyRequestCard item={item} index={index} />}
           style={styles.flex}
           contentContainerStyle={[styles.listContent, compact && styles.contentCompact]}
+          refreshControl={
+            <RefreshControl refreshing={loadingMine} onRefresh={() => void fetchMine()} />
+          }
+          ListHeaderComponent={
+            mineError ? (
+              <Notice icon="alert-circle" color={colors.danger} text={mineError} />
+            ) : undefined
+          }
           ListEmptyComponent={
-            <EmptyState
-              icon="calendar"
-              title="Henüz talebin yok"
-              description="Oluşturduğun izin talepleri ve durumları burada listelenir."
-            />
+            loadingMine ? null : (
+              <EmptyState
+                icon="calendar"
+                title="Henüz talebin yok"
+                description="Oluşturduğun izin talepleri ve durumları burada listelenir."
+              />
+            )
           }
         />
       )}

@@ -8,6 +8,7 @@ import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
+import { changePasswordRequest } from '@/services/auth';
 import { useAuthStore } from '@/store/authStore';
 
 export default function ChangePasswordScreen() {
@@ -15,9 +16,10 @@ export default function ChangePasswordScreen() {
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   const completeFirstLogin = useAuthStore((s) => s.completeFirstLogin);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (newPassword.length < 6) {
       setError('Şifre en az 6 karakter olmalı');
       return;
@@ -27,7 +29,14 @@ export default function ChangePasswordScreen() {
       return;
     }
     setError('');
-    console.log('Yeni şifre kaydedildi:', newPassword);
+    setLoading(true);
+    const result = await changePasswordRequest(newPassword, confirmPassword);
+    setLoading(false);
+
+    if (!result.ok) {
+      setError(result.message);
+      return;
+    }
     completeFirstLogin();
     router.replace('/');
   };
@@ -62,7 +71,7 @@ export default function ChangePasswordScreen() {
             <ThemedText style={[styles.error, { color: colors.danger }]}>{error}</ThemedText>
           )}
 
-          <Button label="Şifreyi Kaydet" onPress={handleSubmit} />
+          <Button label="Şifreyi Kaydet" onPress={handleSubmit} loading={loading} />
         </Card>
       </View>
     </View>

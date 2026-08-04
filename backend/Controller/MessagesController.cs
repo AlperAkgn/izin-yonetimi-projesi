@@ -27,6 +27,93 @@ namespace LeaveManagementAPI.Controller
             "image/jpeg", "image/png", "image/gif", "image/webp",
             "video/mp4", "audio/mpeg", "audio/wav"
         };
+        /// <summary>Oturumdaki kullanicinin sohbet listesi (son mesaj + okunmamis sayisi).</summary>
+        [HttpGet("conversations")]
+        public async Task<ActionResult<IReadOnlyList<ConversationResponse>>> GetConversations(
+            CancellationToken cancellationToken)
+        {
+            if (!TryGetCurrentUserId(out var currentUserId))
+            {
+                return Unauthorized(new { message = "Gecersiz token." });
+            }
+
+            var summaries = await context.Messages
+                .Where(message => message.SenderId == currentUserId || message.ReceiverId == currentUserId)
+                .GroupBy(message => message.SenderId == currentUserId ? message.ReceiverId : message.SenderId)
+                .Select(group => new
+                {
+                    PartnerId = group.Key,
+                    UnreadCount = group.Count(message => message.ReceiverId == currentUserId && !message.IsRead),
+                    Last = group
+                        .OrderByDescending(message => message.Timestamp)
+                        .ThenByDescending(message => message.Id)
+                        .Select(message => new
+                        {
+                            message.Content,
+                            message.Timestamp,
+                            message.SenderId,
+                            HasAttachment = message.Attachments.Any()
+                        })
+                        .First()
+                })
+                .ToListAsync(cancellationToken);
+
+            var partnerIds = summaries.Select(summary => summary.PartnerId).ToList();
+            // Pasif/silinmis kullanicilarin gecmis sohbetleri de isimleriyle gorunsun
+            var partners = await context.Users
+                .IgnoreQueryFilters()
+                .Where(user => partnerIds.Contains(user.Id))
+                .Select(user => new { user.Id, user.Name, user.Surname, user.Role })
+                .ToDictionaryAsync(user => user.Id, cancellationToken);
+
+            var conversations = summaries
+                .OrderByDescending(summary => summary.Last.Timestamp)
+                .Select(summary => new ConversationResponse
+                {
+                    PartnerId = summary.PartnerId,
+                    PartnerName = partners.TryGetValue(summary.PartnerId, out var partner)
+                        ? $"{partner.Name} {partner.Surname}".Trim()
+                        : "Bilinmeyen Kullanici",
+                    PartnerRole = partners.TryGetValue(summary.PartnerId, out var rolePartner)
+                        ? rolePartner.Role.ToString()
+                        : string.Empty,
+                    LastContent = summary.Last.Content,
+                    LastTimestamp = summary.Last.Timestamp,
+                    LastSenderId = summary.Last.SenderId,
+                    LastHasAttachment = summary.Last.HasAttachment,
+                    UnreadCount = summary.UnreadCount
+                })
+                .ToList();
+
+            return Ok(conversations);
+        }
+
+        /// <summary>Yeni sohbet baslatilabilecek aktif kullanicilar (kendisi haric).</summary>
+        [HttpGet("contacts")]
+        public async Task<ActionResult<IReadOnlyList<ContactResponse>>> GetContacts(
+            CancellationToken cancellationToken)
+        {
+            if (!TryGetCurrentUserId(out var currentUserId))
+            {
+                return Unauthorized(new { message = "Gecersiz token." });
+            }
+
+            var contacts = await context.Users
+                .Where(user => user.IsActive && user.Id != currentUserId)
+                .OrderBy(user => user.Name)
+                .ThenBy(user => user.Surname)
+                .Select(user => new ContactResponse
+                {
+                    Id = user.Id,
+                    Name = user.Name,
+                    Surname = user.Surname,
+                    Role = user.Role.ToString()
+                })
+                .ToListAsync(cancellationToken);
+
+            return Ok(contacts);
+        }
+
         [HttpGet("{senderId:long}/{receiverId:long}")]
         public async Task<ActionResult<IReadOnlyList<MessageResponse>>> GetConversation(
             long senderId,
