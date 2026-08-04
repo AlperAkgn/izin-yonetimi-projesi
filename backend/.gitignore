@@ -16,6 +16,11 @@ obj/
 # Local app configuration overrides
 appsettings.Development.json
 
+# Ortam değişkenleri — SMTP uygulama şifresi burada tutulur, commit'lenmemeli
+.env
+.env.*
+!.env.example
+
 # Logs and temp files
 *.log
 *.tmp

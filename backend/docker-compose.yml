@@ -28,6 +28,14 @@ services:
       - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=leavemanagement;Username=postgres;Password=admin123
       - ASPNETCORE_ENVIRONMENT=Development
       - ASPNETCORE_URLS=http://+:8080
+      # Geçici şifre e-postası — değerler backend/.env dosyasından okunur.
+      # MAIL_FROM ve MAIL_PASSWORD boşsa kullanıcı oluşturma 503 döner (tasarım gereği).
+      # Port 587 olmalı: SmtpClient(EnableSsl) STARTTLS kullanır, 465 (implicit TLS) desteklenmez.
+      - MailSettings__SmtpServer=${MAIL_SMTP_SERVER:-smtp.gmail.com}
+      - MailSettings__Port=${MAIL_PORT:-587}
+      - MailSettings__SenderName=${MAIL_SENDER_NAME:-PermitFlow}
+      - MailSettings__From=${MAIL_FROM:-}
+      - MailSettings__Password=${MAIL_PASSWORD:-}
     depends_on:
       - postgres
     networks:
