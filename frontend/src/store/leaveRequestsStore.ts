@@ -147,9 +147,11 @@ interface LeaveRequestsState {
   createOnBehalf: (employeeMail: string, input: leaveApi.CreateLeaveInput) => Promise<ActionResult>;
   approveRequest: (id: string) => Promise<ActionResult>;
   rejectRequest: (id: string, reason: string) => Promise<ActionResult>;
+  /** Talep sahibi kendi bekleyen/onaylanmış iznini geri çeker */
+  cancelRequest: (id: string) => Promise<ActionResult>;
 }
 
-/** approval listesindeki bir kaydı sunucudan dönen haliyle değiştirir */
+/** Listedeki bir kaydı sunucudan dönen haliyle değiştirir */
 function replaceIn(list: LeaveRequest[], updated: LeaveRequest): LeaveRequest[] {
   return list.map((r) => (r.id === updated.id ? updated : r));
 }
@@ -253,6 +255,23 @@ export const useLeaveRequestsStore = create<LeaveRequestsState>((set, get) => ({
     try {
       const updated = await leaveApi.rejectLeaveRequest(id, reason);
       set((state) => ({ approval: replaceIn(state.approval, updated) }));
+      return { ok: true, request: updated };
+    } catch (error) {
+      return { ok: false, message: getErrorMessage(error) };
+    }
+  },
+
+  cancelRequest: async (id) => {
+    try {
+      const updated = await leaveApi.cancelLeaveRequest(id);
+      // İK/admin kendi talebini iptal ettiğinde aynı kayıt onay listesinde de
+      // duruyor olabilir; oradaki kopya eskide kalmasın.
+      set((state) => ({
+        mine: replaceIn(state.mine, updated),
+        approval: state.approval.some((r) => r.id === updated.id)
+          ? replaceIn(state.approval, updated)
+          : state.approval,
+      }));
       return { ok: true, request: updated };
     } catch (error) {
       return { ok: false, message: getErrorMessage(error) };
