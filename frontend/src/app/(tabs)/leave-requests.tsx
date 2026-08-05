@@ -33,10 +33,11 @@ import {
   useLeaveRequestsStore,
 } from '@/store/leaveRequestsStore';
 import { showToast } from '@/store/toastStore';
+import { showConfirm } from '@/utils/alert';
 import { countNetWeekdays, formatDate } from '@/utils/date';
 import { normalizePhone } from '@/utils/phone';
 
-import type { LeaveRequest, LeaveType } from '@/store/leaveRequestsStore';
+import type { LeaveRequest, LeaveStatus, LeaveType } from '@/store/leaveRequestsStore';
 
 const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
 
@@ -82,9 +83,44 @@ function validateAddress(value: string) {
 }
 
 // ─── Kendi talep kartı ────────────────────────────────────────────
+/**
+ * Backend iptale yalnızca PENDING ve APPROVED durumlarında izin verir
+ * (LeaveRequestsController.Cancel). AUTO_APPROVED sunucuda ayrı bir durum
+ * değil — acil izinlerin APPROVED hâline arayüzün verdiği ad; o yüzden o da
+ * iptal edilebilir.
+ */
+function isCancelable(status: LeaveStatus) {
+  return status === 'PENDING' || status === 'APPROVED' || status === 'AUTO_APPROVED';
+}
+
 function MyRequestCard({ item, index }: { item: LeaveRequest; index: number }) {
   const { colors } = useDesign();
   const meta = statusMeta(item.status);
+  const cancelRequest = useLeaveRequestsStore((s) => s.cancelRequest);
+  const [cancelling, setCancelling] = useState(false);
+
+  const handleCancel = () => {
+    showConfirm(
+      'Talebi iptal et',
+      `${item.startDate} → ${item.endDate} tarihli ${item.leaveType} iznin iptal edilecek. Bu işlem geri alınamaz.`,
+      // showConfirm'in vazgeçme düğmesi zaten "İptal"; onay düğmesi de "İptal Et"
+      // olsaydı hangisinin ne yaptığı anlaşılmazdı
+      'Evet, iptal et',
+      () => {
+        void (async () => {
+          setCancelling(true);
+          const result = await cancelRequest(item.id);
+          setCancelling(false);
+          showToast({
+            message: result.ok
+              ? 'İzin talebin iptal edildi.'
+              : (result.message ?? 'Talep iptal edilemedi.'),
+            tone: result.ok ? 'success' : 'danger',
+          });
+        })();
+      },
+    );
+  };
 
   return (
     <Animated.View
@@ -146,6 +182,27 @@ function MyRequestCard({ item, index }: { item: LeaveRequest; index: number }) {
         <ThemedText style={[styles.processedAt, { color: colors.textFaint }]}>
           İşlem: {item.processedAt}
         </ThemedText>
+      )}
+
+      {isCancelable(item.status) && (
+        <Pressable
+          onPress={handleCancel}
+          disabled={cancelling}
+          accessibilityRole="button"
+          accessibilityLabel="Talebi iptal et"
+          style={({ pressed }) => [
+            styles.cancelBtn,
+            {
+              borderColor: colors.danger,
+              backgroundColor: `${colors.danger}${pressed ? '20' : '00'}`,
+              opacity: cancelling ? 0.6 : 1,
+            },
+          ]}>
+          <Feather name="x-circle" size={13} color={colors.danger} />
+          <ThemedText style={[styles.cancelBtnText, { color: colors.danger }]}>
+            {cancelling ? 'İptal ediliyor…' : 'Talebi iptal et'}
+          </ThemedText>
+        </Pressable>
       )}
     </Animated.View>
   );
@@ -856,5 +913,21 @@ const styles = StyleSheet.create({
   },
   processedAt: {
     fontSize: 11,
+  },
+  // Kendi kartındaki tek yıkıcı eylem: kartı domine etmesin diye çerçeveli
+  // ve sağa yaslı — onay ekranındaki tam genişlik ikili düğmelerin aksine
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-end',
+    gap: Space.xs,
+    borderWidth: 1,
+    borderRadius: Radius.pill,
+    paddingHorizontal: Space.md,
+    paddingVertical: 6,
+  },
+  cancelBtnText: {
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
