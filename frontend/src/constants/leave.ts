@@ -6,6 +6,22 @@ import type { LeaveStatus, LeaveType } from '@/store/leaveRequestsStore';
 /** Formlarda ve filtrelerde gösterilen sıra */
 export const LEAVE_TYPES: LeaveType[] = ['Yıllık', 'Sağlık', 'Mazeret', 'Acil'];
 
+/** Backend enum'u → arayüz etiketi (tanınmayan değer "Mazeret" sayılır) */
+export function leaveTypeFromApi(apiType: string): LeaveType {
+  switch (apiType) {
+    case 'ANNUAL':
+      return 'Yıllık';
+    case 'SICK':
+      return 'Sağlık';
+    case 'UNPAID':
+      return 'Ücretsiz';
+    case 'EMERGENCY':
+      return 'Acil';
+    default:
+      return 'Mazeret';
+  }
+}
+
 /** İzin türünün çip/rozet üzerinde kullanılan simgesi */
 export function leaveTypeEmoji(type: string): string {
   switch (type) {
@@ -19,6 +35,22 @@ export function leaveTypeEmoji(type: string): string {
       return '🚨';
     default:
       return '📄';
+  }
+}
+
+/** Dağılım grafiklerinde türü ayırt eden renk */
+export function leaveTypeColor(type: string): string {
+  switch (type) {
+    case 'Yıllık':
+      return Palette.primary;
+    case 'Sağlık':
+      return Palette.success;
+    case 'Mazeret':
+      return Palette.warning;
+    case 'Acil':
+      return Palette.danger;
+    default:
+      return Palette.canceled;
   }
 }
 

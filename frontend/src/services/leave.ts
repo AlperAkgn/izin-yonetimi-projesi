@@ -1,5 +1,6 @@
+import { leaveTypeFromApi } from '@/constants/leave';
 import { apiFetch } from '@/services/api';
-import { countNetWeekdays } from '@/utils/date';
+import { countNetWeekdays, isoToDisplayDate } from '@/utils/date';
 
 import type { LeaveRequest, LeaveStatus, LeaveType } from '@/store/leaveRequestsStore';
 
@@ -30,14 +31,6 @@ type LeaveRequestDto = {
   processedAt?: string | null;
 };
 
-const TYPE_FROM_API: Record<string, LeaveType> = {
-  ANNUAL: 'Yıllık',
-  SICK: 'Sağlık',
-  OTHER: 'Mazeret',
-  UNPAID: 'Ücretsiz',
-  EMERGENCY: 'Acil',
-};
-
 const TYPE_TO_API: Record<LeaveType, string> = {
   Yıllık: 'ANNUAL',
   Sağlık: 'SICK',
@@ -54,12 +47,6 @@ function statusFromApi(status: string, leaveType: LeaveType): LeaveStatus {
   return status as LeaveStatus;
 }
 
-/** "2026-08-12T00:00:00Z" → "12.08.2026" (saat dilimi kaymasına düşmeden) */
-function isoToDisplayDate(iso: string): string {
-  const [year, month, day] = iso.slice(0, 10).split('-');
-  return `${day}.${month}.${year}`;
-}
-
 /** Date → "YYYY-MM-DD" (yerel takvim günü — backend gün hassasiyetinde çalışır) */
 function toApiDate(date: Date): string {
   const mm = String(date.getMonth() + 1).padStart(2, '0');
@@ -73,7 +60,7 @@ function parseIsoDay(iso: string): Date {
 }
 
 export function mapLeaveRequest(dto: LeaveRequestDto): LeaveRequest {
-  const leaveType = TYPE_FROM_API[dto.leaveType] ?? 'Mazeret';
+  const leaveType = leaveTypeFromApi(dto.leaveType);
   const processed = dto.processedAt ? new Date(dto.processedAt) : null;
 
   return {

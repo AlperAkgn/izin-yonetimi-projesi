@@ -1,6 +1,7 @@
 import Feather from '@expo/vector-icons/Feather';
-import { Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown, FadeOutDown, LinearTransition } from 'react-native-reanimated';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { Palette, Radius, Shadow, Space } from '@/constants/design';
@@ -76,11 +77,14 @@ function ToastRow({ toast }: { toast: Toast }) {
  */
 export function ToastHost() {
   const toasts = useToastStore((s) => s.toasts);
+  // Ekranın en altına yaslandığı için sistem çubuğunun (iOS ana ekran çubuğu,
+  // Android gezinme çubuğu) altında kalmasın
+  const insets = useSafeAreaInsets();
 
   if (toasts.length === 0) return null;
 
   return (
-    <View pointerEvents="box-none" style={styles.host}>
+    <View pointerEvents="box-none" style={[styles.host, { paddingBottom: Space.xl + insets.bottom }]}>
       {toasts.map((toast) => (
         <ToastRow key={toast.id} toast={toast} />
       ))}
@@ -96,9 +100,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     paddingHorizontal: Space.xl,
-    // Projede SafeAreaProvider bağlı değil; useSafeAreaInsets çağırmak yerine
-    // iOS ana ekran çubuğunu sabit değerle geçiyoruz.
-    paddingBottom: Platform.select({ ios: 44, default: Space.xl }),
+    // paddingBottom bileşende güvenli alana göre veriliyor
     gap: Space.sm,
   },
   toast: {

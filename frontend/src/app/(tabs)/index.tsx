@@ -1,19 +1,28 @@
-import { useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { RefreshControl, StyleSheet, View } from 'react-native';
+import Feather from '@expo/vector-icons/Feather';
+import { router, useFocusEffect } from 'expo-router';
+import { Children, useCallback, useState, type ReactNode } from 'react';
+import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
+import { Avatar } from '@/components/ui/avatar';
 import { Screen } from '@/components/ui/screen';
 import { Card } from '@/components/ui/card';
+import { DetailSheet } from '@/components/ui/detail-sheet';
+import { Notice } from '@/components/ui/notice';
+import { SectionHeader } from '@/components/ui/section-header';
 import { useDesign } from '@/hooks/use-design';
-import { Space, Radius } from '@/constants/design';
+import { useWideLayout } from '@/hooks/use-columns';
+import { Palette, Space, Radius } from '@/constants/design';
 import { getErrorMessage } from '@/services/api';
 import { fetchDashboard } from '@/services/dashboard';
-import { leaveTypeEmoji } from '@/constants/leave';
+import { leaveTypeColor, leaveTypeEmoji, leaveTypeFromApi } from '@/constants/leave';
 import { useAuthStore } from '@/store/authStore';
 import { useLeaveRequestsStore } from '@/store/leaveRequestsStore';
+import { formatDate, isoToDisplayDate } from '@/utils/date';
 
-import type { AdminDashboard, HrDashboard } from '@/services/dashboard';
+import type { FeatherName } from '@/components/ui/icon';
+import type { AuthUser } from '@/store/authStore';
+import type { AdminDashboard, EmployeeLeaveBalance, HrDashboard } from '@/services/dashboard';
 
 const ROLE_LABEL: Record<string, string> = {
   EMPLOYEE: 'Personel',
@@ -21,41 +30,152 @@ const ROLE_LABEL: Record<string, string> = {
   ADMIN: 'Sistem Yöneticisi',
 };
 
-const LEAVE_TYPE_LABEL: Record<string, string> = {
-  ANNUAL: 'Yıllık',
-  SICK: 'Sağlık',
-  OTHER: 'Mazeret',
-  UNPAID: 'Ücretsiz',
-  EMERGENCY: 'Acil',
-};
+/** Kritik olmayan personelden kaç kişinin "limite en yakın" listesine gireceği */
+const WATCHLIST_SIZE = 3;
 
-// ---- İstatistik kartı ----
-function StatCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  const { colors } = useDesign();
+// ─────────────────────────────────────────────────────────────────────
+// Yerleşim
+//
+// Tek boşluk ölçüsü kullanılır: Space.md. Screen'in kendi `gap`'i de aynı
+// olduğu için satır arası, sütun arası ve bölüm arası mesafeler eşitlenir —
+// panelin dağınık görünmesinin asıl sebebi burada üst üste binen üç ayrı
+// boşluk mekanizmasıydı (padding + margin + gap).
+// ─────────────────────────────────────────────────────────────────────
+
+/**
+ * Kart *içeriklerini* alır, kart kabuğunu (kenarlık, dolgu) kendisi çizer.
+ * Geniş ekranda iki eşit sütun; kartlar aynı satırda aynı yüksekliğe uzar.
+ * Dar ekranda alt alta tam genişlik — telefon görünümü değişmez.
+ */
+function CardGrid({ children }: { children: ReactNode }) {
+  const wide = useWideLayout();
+  const items = Children.toArray(children);
+
+  if (!wide) {
+    return (
+      <>
+        {items.map((child, index) => (
+          <Card key={index}>{child}</Card>
+        ))}
+      </>
+    );
+  }
+
   return (
-    <View style={styles.statItem}>
-      <Card>
-        <ThemedText style={[styles.statLabel, { color: colors.textMuted }]}>{label}</ThemedText>
-        <ThemedText style={[styles.statValue, { color: colors.text }]}>{value}</ThemedText>
-        {hint && <ThemedText style={[styles.statHint, { color: colors.textFaint }]}>{hint}</ThemedText>}
-      </Card>
+    <View style={styles.contentRow}>
+      {items.map((child, index) => (
+        <View key={index} style={styles.contentCol}>
+          <Card style={styles.fill}>{child}</Card>
+        </View>
+      ))}
     </View>
   );
 }
 
-// Küçük yatay istatistik (kart içinde)
-function StatInline({ label, value }: { label: string; value: string }) {
+/**
+ * Panelin üst şeridindeki sayı kutusu. Renkli ikon rozeti satıra ritim
+ * verir; ok işareti kutunun tıklanabilir olduğunu gösterir.
+ */
+function StatTile({
+  icon,
+  tone,
+  label,
+  value,
+  hint,
+  onPress,
+}: {
+  icon: FeatherName;
+  tone: string;
+  label: string;
+  value: string;
+  hint?: string;
+  onPress?: () => void;
+}) {
+  const { colors } = useDesign();
+  const wide = useWideLayout();
+
+  const card = (
+    <Card style={styles.tile}>
+      <View style={styles.tileHead}>
+        <View style={[styles.tileIcon, { backgroundColor: `${tone}22` }]}>
+          <Feather name={icon} size={16} color={tone} />
+        </View>
+        {onPress && <Feather name="chevron-right" size={16} color={colors.textFaint} />}
+      </View>
+      <ThemedText style={[styles.tileValue, { color: colors.text }]}>{value}</ThemedText>
+      <ThemedText style={[styles.tileLabel, { color: colors.textMuted }]}>{label}</ThemedText>
+      {hint !== undefined && (
+        <ThemedText style={[styles.tileHint, { color: colors.textFaint }]} numberOfLines={1}>
+          {hint}
+        </ThemedText>
+      )}
+    </Card>
+  );
+
+  // Geniş ekranda tek sıra (dörde bölünür), dar ekranda ikişerli sarar
+  const item = wide ? styles.tileItemWide : styles.tileItemNarrow;
+
+  if (!onPress) return <View style={item}>{card}</View>;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${value}`}
+      style={({ pressed }) => [item, pressed ? styles.pressed : undefined]}>
+      {card}
+    </Pressable>
+  );
+}
+
+/** Etiket–değer satırı (kart içi özet listesi) */
+function MetaRow({ label, value, strong }: { label: string; value: string; strong?: boolean }) {
   const { colors } = useDesign();
   return (
-    <View style={styles.inlineItem}>
-      <ThemedText style={[styles.inlineValue, { color: colors.text }]}>{value}</ThemedText>
-      <ThemedText style={[styles.inlineLabel, { color: colors.textMuted }]}>{label}</ThemedText>
+    <View style={styles.metaRow}>
+      <ThemedText style={[styles.metaLabel, { color: colors.textMuted }]} numberOfLines={1}>
+        {label}
+      </ThemedText>
+      <ThemedText
+        style={[styles.metaValue, { color: strong ? colors.text : colors.textMuted }]}>
+        {value}
+      </ThemedText>
     </View>
   );
 }
 
-// ---- Şube başına personel (admin) ----
-function BranchDistribution({ data }: { data: AdminDashboard['workplaceComparison'] }) {
+/** Detay listelerindeki kişi satırı */
+function PersonRow({ name, meta, tone }: { name: string; meta?: string; tone?: string }) {
+  const { colors } = useDesign();
+  const [firstName, ...rest] = name.split(' ');
+
+  return (
+    <View style={styles.personRow}>
+      <Avatar firstName={firstName ?? ''} lastName={rest.join(' ')} size={36} />
+      <View style={styles.grow}>
+        <ThemedText style={styles.personName} numberOfLines={1}>{name}</ThemedText>
+        {meta !== undefined && (
+          <ThemedText style={[styles.personMeta, { color: tone ?? colors.textMuted }]}>
+            {meta}
+          </ThemedText>
+        )}
+      </View>
+    </View>
+  );
+}
+
+/** Liste boşken kart/sayfa içi kısa mesaj */
+function EmptyLine({ text }: { text: string }) {
+  const { colors } = useDesign();
+  return <ThemedText style={[styles.empty, { color: colors.textMuted }]}>{text}</ThemedText>;
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Kart içerikleri (kabuğu CardGrid çizer)
+// ─────────────────────────────────────────────────────────────────────
+
+/** Şube başına personel — satırlar şube detayına gider */
+function BranchComparison({ data }: { data: AdminDashboard['workplaceComparison'] }) {
   const { colors } = useDesign();
 
   const allRows = [...data].sort((a, b) => b.employeeCount - a.employeeCount);
@@ -65,22 +185,28 @@ function BranchDistribution({ data }: { data: AdminDashboard['workplaceCompariso
   const max = Math.max(1, ...allRows.map((r) => r.employeeCount));
 
   return (
-    <Card>
-      <View style={styles.distHeader}>
-        <ThemedText style={styles.cardHeading}>Şube Karşılaştırması</ThemedText>
-        {allRows.length > 0 && (
-          <ThemedText style={[styles.distCount, { color: colors.textFaint }]}>{allRows.length} şube</ThemedText>
-        )}
-      </View>
+    <>
+      <SectionHeader
+        icon="bar-chart-2"
+        title="Şube Karşılaştırması"
+        subtitle={allRows.length === 0 ? 'Henüz şube yok' : `${allRows.length} şube · personel sayısı`}
+      />
       {rows.length === 0 ? (
-        <ThemedText style={[styles.empty, { color: colors.textMuted }]}>Henüz şube yok</ThemedText>
+        <EmptyLine text="Şube eklendiğinde karşılaştırma burada görünür" />
       ) : (
-        <>
+        <View style={styles.rowList}>
           {rows.map((r) => (
-            <View key={r.workplaceId} style={styles.barBlock}>
+            <Pressable
+              key={r.workplaceId}
+              onPress={() => router.push(`/branch/${r.workplaceId}`)}
+              accessibilityRole="button"
+              accessibilityLabel={`${r.workplaceName}: ${r.employeeCount} personel`}
+              style={({ pressed }) => (pressed ? styles.pressed : undefined)}>
               <View style={styles.barTop}>
                 <ThemedText style={styles.barLabel} numberOfLines={1}>{r.workplaceName}</ThemedText>
-                <ThemedText style={[styles.barCount, { color: colors.textMuted }]}>{r.employeeCount}</ThemedText>
+                <ThemedText style={[styles.barCount, { color: colors.textMuted }]}>
+                  {r.employeeCount}
+                </ThemedText>
               </View>
               <View style={[styles.barTrack, { backgroundColor: colors.surfaceRaised }]}>
                 <View
@@ -90,137 +216,412 @@ function BranchDistribution({ data }: { data: AdminDashboard['workplaceCompariso
                   ]}
                 />
               </View>
-            </View>
+            </Pressable>
           ))}
           {remaining > 0 && (
-            <ThemedText style={[styles.distMore, { color: colors.textFaint }]}>
+            <ThemedText style={[styles.footnote, { color: colors.textFaint }]}>
               ve {remaining} şube daha — tümü Şubeler bölümünde
             </ThemedText>
           )}
-        </>
+        </View>
       )}
-    </Card>
+    </>
   );
 }
 
-// ---- ADMIN paneli ----
+/** Şartname: soft-delete pasif veri hacmi */
+function SoftDeleteVolume({ data }: { data: AdminDashboard['softDeletedDataVolume'] }) {
+  return (
+    <>
+      <SectionHeader
+        icon="archive"
+        title="Pasif Veri Hacmi"
+        subtitle="Soft-delete ile saklanan kayıtlar"
+      />
+      <View style={styles.rowList}>
+        <MetaRow label="Silinen şube" value={String(data.workplaces)} />
+        <MetaRow label="Silinen kullanıcı" value={String(data.users)} />
+        <MetaRow label="Silinen izin" value={String(data.leaveRequests)} />
+        <MetaRow label="Toplam" value={String(data.totalCount)} strong />
+      </View>
+    </>
+  );
+}
+
+/**
+ * Şartname: izin tipi kullanım dağılımı (bu yıl, onaylılar).
+ * Grafik iki katmanlı — üstte payları gösteren yığılmış şerit, altında
+ * aynı renklerle okunan tür kırılımı.
+ */
+function LeaveTypeDistribution({ data }: { data: HrDashboard['leaveTypeDistribution'] }) {
+  const { colors } = useDesign();
+  const year = new Date().getFullYear();
+
+  const rows = data.map((item) => ({ ...item, label: leaveTypeFromApi(item.leaveType) }));
+  const totalDays = rows.reduce((sum, r) => sum + r.chargedLeaveDays, 0);
+  const totalRequests = rows.reduce((sum, r) => sum + r.requestCount, 0);
+
+  return (
+    <>
+      <SectionHeader
+        icon="pie-chart"
+        title="İzin Tipi Dağılımı"
+        subtitle={
+          totalDays === 0
+            ? `${year} · onaylanmış izin yok`
+            : `${year} · ${totalDays} gün · ${totalRequests} talep`
+        }
+      />
+
+      {totalDays === 0 ? (
+        <EmptyLine text="Onaylanan talepler buradaki dağılıma girer" />
+      ) : (
+        <>
+          <View style={[styles.stackTrack, { backgroundColor: colors.surfaceRaised }]}>
+            {rows.map((r) => (
+              <View
+                key={r.leaveType}
+                style={{ flex: r.chargedLeaveDays, backgroundColor: leaveTypeColor(r.label) }}
+              />
+            ))}
+          </View>
+
+          <View style={styles.rowList}>
+            {rows.map((r) => (
+              <View key={r.leaveType} style={styles.legendRow}>
+                <View style={[styles.legendDot, { backgroundColor: leaveTypeColor(r.label) }]} />
+                <ThemedText style={styles.legendLabel} numberOfLines={1}>
+                  {leaveTypeEmoji(r.label)} {r.label}
+                </ThemedText>
+                <ThemedText style={[styles.legendMeta, { color: colors.textMuted }]}>
+                  {r.chargedLeaveDays} gün · {r.requestCount} talep
+                </ThemedText>
+                <ThemedText style={[styles.legendShare, { color: colors.text }]}>
+                  %{Math.round((r.chargedLeaveDays / totalDays) * 100)}
+                </ThemedText>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
+    </>
+  );
+}
+
+/** Tek personelin bakiye şeridi */
+function BalanceRow({ item, tone }: { item: EmployeeLeaveBalance; tone: string }) {
+  const { colors } = useDesign();
+  const ratio =
+    item.annualLeaveEntitlement > 0 ? item.usedLeaveDays / item.annualLeaveEntitlement : 0;
+
+  return (
+    <View>
+      <View style={styles.barTop}>
+        <ThemedText style={styles.barLabel} numberOfLines={1}>{item.name}</ThemedText>
+        <ThemedText style={[styles.barCount, { color: tone }]}>
+          {item.remainingLeaveDays} gün kaldı
+        </ThemedText>
+      </View>
+      <View style={[styles.barTrack, { backgroundColor: colors.surfaceRaised }]}>
+        <View
+          style={[styles.barFill, { backgroundColor: tone, width: `${Math.min(ratio, 1) * 100}%` }]}
+        />
+      </View>
+      <ThemedText style={[styles.footnote, { color: colors.textFaint }]}>
+        {item.usedLeaveDays} / {item.annualLeaveEntitlement} gün kullanıldı
+      </ThemedText>
+    </View>
+  );
+}
+
+/** Şartname: kurum içi limitin altına düşen personel listesi */
+function CriticalBalances({
+  employees,
+  threshold,
+}: {
+  employees: EmployeeLeaveBalance[];
+  threshold: number;
+}) {
+  const { colors } = useDesign();
+
+  // Liste ada göre geliyor; burada bakiyesi en azdan çoğa sıralanır
+  const byRemaining = [...employees].sort(
+    (a, b) => a.remainingLeaveDays - b.remainingLeaveDays || a.name.localeCompare(b.name, 'tr'),
+  );
+  const critical = byRemaining.filter((item) => item.isCritical);
+  // Kritik kimse yokken kart boş kalmasın: limite en yakın personel gösterilir
+  const watchlist = byRemaining.filter((item) => !item.isCritical).slice(0, WATCHLIST_SIZE);
+
+  return (
+    <>
+      <SectionHeader
+        icon="alert-triangle"
+        title="Kritik İzin Bakiyesi"
+        subtitle={`Kurum içi limit: ${threshold} gün ve altı`}
+      />
+
+      {critical.length > 0 ? (
+        <>
+          <Notice
+            icon="alert-triangle"
+            text={`${critical.length} personelin kalan izni limitin altında`}
+            color={colors.danger}
+          />
+          <View style={styles.rowList}>
+            {critical.map((item) => (
+              <BalanceRow key={item.userId} item={item} tone={colors.danger} />
+            ))}
+          </View>
+        </>
+      ) : (
+        <>
+          <Notice
+            icon="check-circle"
+            text="Bakiyesi kritik seviyede personel yok"
+            color={colors.success}
+          />
+          {watchlist.length > 0 && (
+            <>
+              <ThemedText style={[styles.subHeading, { color: colors.textMuted }]}>
+                Limite en yakın personel
+              </ThemedText>
+              <View style={styles.rowList}>
+                {watchlist.map((item) => (
+                  <BalanceRow key={item.userId} item={item} tone={colors.success} />
+                ))}
+              </View>
+            </>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Paneller
+// ─────────────────────────────────────────────────────────────────────
+
 function AdminPanel({ data }: { data: AdminDashboard }) {
   const { colors } = useDesign();
   const usage = data.systemUsage;
+  const usageAvailable = usage.status === 'AVAILABLE';
+  const [staffSheetOpen, setStaffSheetOpen] = useState(false);
+
+  const branchesByStaff = [...data.workplaceComparison].sort(
+    (a, b) => b.employeeCount - a.employeeCount,
+  );
+
+  const openBranch = (workplaceId: number) => {
+    setStaffSheetOpen(false);
+    router.push(`/branch/${workplaceId}`);
+  };
 
   return (
     <>
-      <View style={styles.statsGrid}>
-        <StatCard label="Aktif şube" value={String(data.activeWorkplaceCount)} />
-        <StatCard label="Toplam personel" value={String(data.totalEmployeeCount)} />
+      <View style={styles.tileRow}>
+        <StatTile
+          icon="map-pin"
+          tone={Palette.primary}
+          label="Aktif şube"
+          value={String(data.activeWorkplaceCount)}
+          hint="Şubeler ekranını aç"
+          onPress={() => router.push('/branches')}
+        />
+        <StatTile
+          icon="users"
+          tone={Palette.primary}
+          label="Toplam personel"
+          value={String(data.totalEmployeeCount)}
+          hint="Şube dağılımını gör"
+          onPress={() => setStaffSheetOpen(true)}
+        />
+        {/* Şartname: anlık WebSocket kullanım istatistiği */}
+        <StatTile
+          icon="activity"
+          tone={Palette.success}
+          label="Online kullanıcı"
+          value={usageAvailable ? String(usage.activeUserCount ?? 0) : '—'}
+          hint={
+            usageAvailable
+              ? `${usage.activeConnectionCount ?? 0} aktif bağlantı`
+              : 'Anlık veri alınamıyor'
+          }
+        />
+        <StatTile
+          icon="archive"
+          tone={Palette.canceled}
+          label="Pasif kayıt"
+          value={String(data.softDeletedDataVolume.totalCount)}
+          hint="Soft-delete toplamı"
+        />
       </View>
 
-      {/* Şartname: organizasyon geneli şube karşılaştırmaları */}
-      <BranchDistribution data={data.workplaceComparison} />
+      <CardGrid>
+        {/* Şartname: organizasyon geneli şube karşılaştırmaları */}
+        <BranchComparison data={data.workplaceComparison} />
+        <SoftDeleteVolume data={data.softDeletedDataVolume} />
+      </CardGrid>
 
-      {/* Şartname: anlık WebSocket kullanım istatistiği */}
-      <Card>
-        <ThemedText style={styles.cardHeading}>Anlık Sistem Kullanımı</ThemedText>
-        {usage.status === 'AVAILABLE' ? (
-          <View style={styles.softDeleteRow}>
-            <StatInline label="Aktif bağlantı" value={String(usage.activeConnectionCount ?? 0)} />
-            <StatInline label="Online kullanıcı" value={String(usage.activeUserCount ?? 0)} />
-          </View>
+      <DetailSheet
+        visible={staffSheetOpen}
+        title="Personelin şubelere dağılımı"
+        subtitle={`${data.totalEmployeeCount} personel · ${data.activeWorkplaceCount} aktif şube`}
+        onClose={() => setStaffSheetOpen(false)}>
+        {branchesByStaff.length === 0 ? (
+          <EmptyLine text="Henüz aktif şube yok" />
         ) : (
-          <ThemedText style={[styles.empty, { color: colors.textMuted }]}>
-            Anlık kullanım verisi şu anda alınamıyor
-          </ThemedText>
+          branchesByStaff.map((branch) => (
+            <Pressable
+              key={branch.workplaceId}
+              onPress={() => openBranch(branch.workplaceId)}
+              accessibilityRole="button"
+              style={({ pressed }) => [styles.sheetRow, pressed ? styles.pressed : undefined]}>
+              <View style={styles.grow}>
+                <ThemedText style={styles.personName} numberOfLines={1}>
+                  {branch.workplaceName}
+                </ThemedText>
+                <ThemedText style={[styles.personMeta, { color: colors.textMuted }]}>
+                  {branch.employeeCount} personel
+                </ThemedText>
+              </View>
+              <Feather name="chevron-right" size={16} color={colors.textFaint} />
+            </Pressable>
+          ))
         )}
-      </Card>
-
-      {/* Şartname: soft-delete pasif veri hacmi */}
-      <Card>
-        <ThemedText style={styles.cardHeading}>Pasif Veri Hacmi (Soft-Delete)</ThemedText>
-        <View style={styles.softDeleteRow}>
-          <StatInline label="Silinen şube" value={String(data.softDeletedDataVolume.workplaces)} />
-          <StatInline label="Silinen kullanıcı" value={String(data.softDeletedDataVolume.users)} />
-          <StatInline label="Silinen izin" value={String(data.softDeletedDataVolume.leaveRequests)} />
-          <StatInline label="Toplam" value={String(data.softDeletedDataVolume.totalCount)} />
-        </View>
-      </Card>
+      </DetailSheet>
     </>
   );
 }
 
-// ---- HR paneli ----
+type HrSheet = 'employees' | 'hrStaff' | 'onLeave';
+
 function HRPanel({ data }: { data: HrDashboard }) {
   const { colors } = useDesign();
-  const distribution = data.leaveTypeDistribution;
-  const critical = data.criticalLeaveBalances;
+  const [sheet, setSheet] = useState<HrSheet | null>(null);
+
+  const onLeave = data.leaveStatus.onLeaveToday;
+  const pending = data.leaveStatus.pendingRequestCount;
 
   return (
     <>
-      <View style={styles.statsGrid}>
-        <StatCard label="Şubedeki personel" value={String(data.employeeCount)} />
-        <StatCard label="Şubedeki İK" value={String(data.hrCount)} />
-      </View>
-
-      {/* Şartname: anlık izinli personel + bekleyen talepler */}
-      <View style={styles.statsGrid}>
-        <StatCard
+      {/* Şartname: şube kadrosu + anlık izinli personel + bekleyen talepler */}
+      <View style={styles.tileRow}>
+        <StatTile
+          icon="users"
+          tone={Palette.primary}
+          label="Şubedeki personel"
+          value={String(data.employeeCount)}
+          hint="Listeyi gör"
+          onPress={() => setSheet('employees')}
+        />
+        <StatTile
+          icon="briefcase"
+          tone={Palette.primary}
+          label="Şubedeki İK"
+          value={String(data.hrCount)}
+          hint="Listeyi gör"
+          onPress={() => setSheet('hrStaff')}
+        />
+        <StatTile
+          icon="sun"
+          tone={Palette.warning}
           label="Bugün izinli"
           value={String(data.leaveStatus.onLeaveTodayCount)}
-          hint={data.workplace.name}
+          hint="Kimler izinde?"
+          onPress={() => setSheet('onLeave')}
         />
-        <StatCard
+        <StatTile
+          icon="inbox"
+          tone={pending > 0 ? Palette.warning : Palette.success}
           label="Bekleyen talep"
-          value={String(data.leaveStatus.pendingRequestCount)}
-          hint="İzin Onay ekranında"
+          value={String(pending)}
+          hint="İzin Onay ekranını aç"
+          onPress={() => router.push('/leave-approval')}
         />
       </View>
 
-      {/* Şartname: izin tipi kullanım dağılımı (bu yıl, onaylılar) */}
-      <Card>
-        <ThemedText style={styles.cardHeading}>İzin Tipi Dağılımı</ThemedText>
-        {distribution.length === 0 ? (
-          <ThemedText style={[styles.empty, { color: colors.textMuted }]}>
-            Bu yıl onaylanmış izin kaydı yok
-          </ThemedText>
+      <CardGrid>
+        <LeaveTypeDistribution data={data.leaveTypeDistribution} />
+        <CriticalBalances employees={data.employees} threshold={data.criticalBalanceThreshold} />
+      </CardGrid>
+
+      <DetailSheet
+        visible={sheet === 'employees'}
+        title="Şubedeki personel"
+        subtitle={`${data.workplace.name} · ${data.employeeCount} kişi`}
+        onClose={() => setSheet(null)}>
+        {data.employees.length === 0 ? (
+          <EmptyLine text="Şubeye atanmış personel yok" />
         ) : (
-          distribution.map((item) => {
-            const label = LEAVE_TYPE_LABEL[item.leaveType] ?? item.leaveType;
+          data.employees.map((person) => (
+            <PersonRow
+              key={person.userId}
+              name={person.name}
+              meta={`${person.remainingLeaveDays} / ${person.annualLeaveEntitlement} gün kaldı`}
+              tone={person.isCritical ? colors.danger : undefined}
+            />
+          ))
+        )}
+      </DetailSheet>
+
+      <DetailSheet
+        visible={sheet === 'hrStaff'}
+        title="Şubedeki İK"
+        subtitle={`${data.workplace.name} · ${data.hrCount} kişi`}
+        onClose={() => setSheet(null)}>
+        {data.hrStaff.length === 0 ? (
+          <EmptyLine text="Şubeye atanmış İK kullanıcısı yok" />
+        ) : (
+          data.hrStaff.map((person) => (
+            <PersonRow key={person.userId} name={person.name} meta="İnsan Kaynakları" />
+          ))
+        )}
+      </DetailSheet>
+
+      <DetailSheet
+        visible={sheet === 'onLeave'}
+        title="Bugün izinli"
+        subtitle={`${data.workplace.name} · ${isoToDisplayDate(data.leaveStatus.date)}`}
+        onClose={() => setSheet(null)}>
+        {onLeave.length === 0 ? (
+          <EmptyLine text="Bugün izinde olan personel yok" />
+        ) : (
+          onLeave.map((person) => {
+            const label = leaveTypeFromApi(person.leaveType);
             return (
-              <View key={item.leaveType} style={styles.typeRow}>
-                <ThemedText style={styles.typeLabel}>
-                  {leaveTypeEmoji(label)} {label}
-                </ThemedText>
-                <ThemedText style={[styles.typeMeta, { color: colors.textMuted }]}>
-                  {item.requestCount} talep · {item.chargedLeaveDays} gün
-                </ThemedText>
-              </View>
+              <PersonRow
+                key={person.userId}
+                name={person.name}
+                meta={`${leaveTypeEmoji(label)} ${label} · ${isoToDisplayDate(person.startDate)} – ${isoToDisplayDate(person.endDate)}`}
+              />
             );
           })
         )}
-      </Card>
-
-      {/* Şartname: kritik bakiye personel listesi */}
-      <Card>
-        <ThemedText style={styles.cardHeading}>Kritik İzin Bakiyesi</ThemedText>
-        {critical.length === 0 ? (
-          <ThemedText style={[styles.empty, { color: colors.textMuted }]}>
-            Bakiyesi kritik seviyede personel yok
-          </ThemedText>
-        ) : (
-          critical.map((item) => (
-            <View key={item.userId} style={styles.typeRow}>
-              <ThemedText style={styles.typeLabel} numberOfLines={1}>{item.name}</ThemedText>
-              <ThemedText style={[styles.typeMeta, { color: colors.danger }]}>
-                {item.remainingLeaveDays} gün kaldı ({item.usedLeaveDays}/{item.annualLeaveEntitlement})
-              </ThemedText>
-            </View>
-          ))
-        )}
-      </Card>
+      </DetailSheet>
     </>
   );
 }
 
-// ---- EMPLOYEE paneli ----
+/**
+ * Personel özeti — telefondan kullanılan görünüm. Yönetici/İK panelinin
+ * masaüstü ızgarasından ayrı tutulur; buradaki düzen bilinçli olarak sade.
+ */
+function EmployeeStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  const { colors } = useDesign();
+  return (
+    <View style={styles.employeeStatItem}>
+      <Card>
+        <ThemedText style={[styles.tileLabel, { color: colors.textMuted }]}>{label}</ThemedText>
+        <ThemedText style={[styles.employeeStatValue, { color: colors.text }]}>{value}</ThemedText>
+        {hint !== undefined && (
+          <ThemedText style={[styles.tileHint, { color: colors.textFaint }]}>{hint}</ThemedText>
+        )}
+      </Card>
+    </View>
+  );
+}
+
 function EmployeePanel() {
   const { colors } = useDesign();
   const user = useAuthStore((s) => s.user);
@@ -248,24 +649,24 @@ function EmployeePanel() {
   return (
     <>
       <Card>
-        <ThemedText style={[styles.wideLabel, { color: colors.textMuted }]}>
+        <ThemedText style={[styles.employeeLabel, { color: colors.textMuted }]}>
           Yıllık izin hakkı
         </ThemedText>
-        <ThemedText style={[styles.wideValue, { color: colors.text }]}>
+        <ThemedText style={[styles.employeeValue, { color: colors.text }]}>
           {entitlement !== null ? `${entitlement} gün` : '—'}
         </ThemedText>
-        <ThemedText style={[styles.wideHint, { color: colors.textFaint }]}>
+        <ThemedText style={[styles.employeeHint, { color: colors.textFaint }]}>
           Detaylı bakiye İzinlerim'de
         </ThemedText>
       </Card>
 
-      <View style={styles.statsGrid}>
-        <StatCard
+      <View style={styles.employeeStatsGrid}>
+        <EmployeeStat
           label="Kullanılan izin"
           value={`${usedDays} gün`}
           hint={`${currentYear} yılı, onaylılar`}
         />
-        <StatCard
+        <EmployeeStat
           label="Bekleyen talebim"
           value={String(pendingCount)}
           hint={
@@ -276,6 +677,41 @@ function EmployeePanel() {
         />
       </View>
     </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────
+
+/** Sayfa başlığı — geniş ekranda selamlama solda, kimlik bilgisi sağda */
+function DashboardHeader({ user }: { user: AuthUser | null }) {
+  const { colors } = useDesign();
+  const wide = useWideLayout();
+
+  return (
+    <View style={[styles.header, wide ? styles.headerWide : null]}>
+      <View style={styles.grow}>
+        <ThemedText style={[styles.greeting, { color: colors.textMuted }]}>Merhaba,</ThemedText>
+        <ThemedText type="title">{user?.name}</ThemedText>
+      </View>
+
+      <View style={[styles.headerTags, wide ? styles.headerTagsWide : null]}>
+        <View style={[styles.rolePill, { backgroundColor: colors.primarySoft }]}>
+          <ThemedText style={[styles.roleText, { color: colors.primary }]}>
+            {user ? ROLE_LABEL[user.role] : ''}
+          </ThemedText>
+        </View>
+        {user?.branchName && (
+          <ThemedText style={[styles.branch, { color: colors.textMuted }]}>
+            📍 {user.branchName}
+          </ThemedText>
+        )}
+        {wide && (
+          <ThemedText style={[styles.headerDate, { color: colors.textFaint }]}>
+            {formatDate(new Date())}
+          </ThemedText>
+        )}
+      </View>
+    </View>
   );
 }
 
@@ -318,24 +754,14 @@ export default function DashboardScreen() {
   }, [load]);
 
   return (
+    // Geniş düzen yalnızca yönetici/İK paneli için: personel görünümü
+    // (telefondan girilen ekran) bugünkü dar kolonunda kalır.
     <Screen
+      wide={canSeeDashboard}
       refreshControl={
         canSeeDashboard ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} /> : undefined
       }>
-      <View style={styles.header}>
-        <ThemedText style={[styles.greeting, { color: colors.textMuted }]}>Merhaba,</ThemedText>
-        <ThemedText type="title">{user?.name}</ThemedText>
-        <View style={styles.headerTags}>
-          <View style={[styles.rolePill, { backgroundColor: colors.primarySoft }]}>
-            <ThemedText style={[styles.roleText, { color: colors.primary }]}>
-              {user ? ROLE_LABEL[user.role] : ''}
-            </ThemedText>
-          </View>
-          {user?.branchName && (
-            <ThemedText style={[styles.branch, { color: colors.textMuted }]}>📍 {user.branchName}</ThemedText>
-          )}
-        </View>
-      </View>
+      <DashboardHeader user={user} />
 
       {error !== '' && (
         <Card>
@@ -351,42 +777,94 @@ export default function DashboardScreen() {
 }
 
 const styles = StyleSheet.create({
-  header: { marginTop: Space.sm, marginBottom: Space.lg, gap: Space.xs },
+  grow: { flex: 1 },
+  fill: { flex: 1 },
+  pressed: { opacity: 0.65 },
+
+  // ---- Başlık ----
+  header: { marginTop: Space.sm, gap: Space.xs, marginBottom: Space.sm },
+  headerWide: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 0 },
   greeting: { fontSize: 15 },
-  headerTags: { flexDirection: 'row', alignItems: 'center', gap: Space.sm, marginTop: Space.xs, flexWrap: 'wrap' },
+  headerTags: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    marginTop: Space.xs,
+    flexWrap: 'wrap',
+  },
+  headerTagsWide: { justifyContent: 'flex-end', marginTop: 0 },
   rolePill: { paddingHorizontal: Space.md, paddingVertical: 5, borderRadius: Radius.pill },
   roleText: { fontSize: 13, fontWeight: '600' },
   branch: { fontSize: 13 },
-  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: Space.md },
-  statItem: { width: '50%', padding: Space.sm },
-  statLabel: { fontSize: 13 },
-  statValue: { fontSize: 26, fontWeight: '700', marginTop: 2, lineHeight: 33 },
-  inlineValue: { fontSize: 22, fontWeight: '700', lineHeight: 28 },
-  statHint: { fontSize: 11, marginTop: 2 },
-  cardHeading: { fontSize: 16, fontWeight: '700' },
+  headerDate: { fontSize: 13 },
+
+  // ---- Izgara ----
+  // Tek ölçü: satır arası da sütun arası da Space.md
+  tileRow: { flexDirection: 'row', flexWrap: 'wrap', gap: Space.md },
+  tileItemWide: { flexBasis: 0, flexGrow: 1 },
+  tileItemNarrow: { flexBasis: '47%', flexGrow: 1 },
+  contentRow: { flexDirection: 'row', alignItems: 'stretch', gap: Space.md },
+  contentCol: { flex: 1 },
+
+  // ---- Sayı kutusu ----
+  tile: { flex: 1, padding: Space.lg, gap: 0 },
+  tileHead: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Space.md,
+  },
+  tileIcon: {
+    width: 32,
+    height: 32,
+    borderRadius: Radius.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  tileValue: { fontSize: 30, fontWeight: '700', lineHeight: 36 },
+  tileLabel: { fontSize: 13, marginTop: 2 },
+  tileHint: { fontSize: 11, marginTop: Space.sm },
+
+  // ---- Kart içi listeler ----
+  rowList: { gap: Space.md },
+  metaRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: Space.md },
+  metaLabel: { fontSize: 13, flexShrink: 1 },
+  metaValue: { fontSize: 14, fontWeight: '700' },
   empty: { fontSize: 13, fontStyle: 'italic' },
-  distHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: Space.sm },
-  distCount: { fontSize: 12 },
-  distMore: { fontSize: 12, marginTop: Space.xs, fontStyle: 'italic' },
-  barBlock: { marginBottom: Space.md },
-  barTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  footnote: { fontSize: 12, marginTop: 4 },
+  subHeading: { fontSize: 12, fontWeight: '600' },
+
+  // ---- Çubuklar ----
+  barTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
   barLabel: { fontSize: 14, fontWeight: '600', flex: 1, marginRight: Space.sm },
   barCount: { fontSize: 13, fontWeight: '600' },
   barTrack: { height: 10, borderRadius: Radius.pill, overflow: 'hidden' },
   barFill: { height: '100%', borderRadius: Radius.pill },
-  softDeleteRow: { flexDirection: 'row', justifyContent: 'space-around', marginTop: Space.sm, flexWrap: 'wrap', gap: Space.md },
-  inlineItem: { alignItems: 'center', gap: 2 },
-  inlineLabel: { fontSize: 12 },
-  typeRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    gap: Space.md,
-    marginTop: Space.sm,
-  },
-  typeLabel: { fontSize: 14, fontWeight: '600', flexShrink: 1 },
-  typeMeta: { fontSize: 13 },
-  wideLabel: { fontSize: 14 },
-  wideValue: { fontSize: 30, fontWeight: '700', marginTop: 4, lineHeight: 38 },
-  wideHint: { fontSize: 12, marginTop: 4 },
+
+  // ---- İzin tipi payları (genişlik gün sayısına orantılanır) ----
+  stackTrack: { flexDirection: 'row', height: 14, borderRadius: Radius.pill, overflow: 'hidden' },
+  legendRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
+  legendDot: { width: 10, height: 10, borderRadius: 5 },
+  legendLabel: { fontSize: 14, fontWeight: '600', flexShrink: 1 },
+  legendMeta: { fontSize: 12, marginLeft: 'auto' },
+  legendShare: { fontSize: 13, fontWeight: '700', minWidth: 40, textAlign: 'right' },
+
+  // ---- Detay listesi ----
+  personRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md },
+  sheetRow: { flexDirection: 'row', alignItems: 'center', gap: Space.md, paddingVertical: Space.xs },
+  personName: { fontSize: 15, fontWeight: '600' },
+  personMeta: { fontSize: 12, marginTop: 2 },
+
+  // ---- Personel paneli (telefon görünümü — değiştirilmedi) ----
+  employeeStatsGrid: { flexDirection: 'row', flexWrap: 'wrap', marginBottom: Space.md },
+  employeeStatItem: { width: '50%', padding: Space.sm },
+  employeeStatValue: { fontSize: 26, fontWeight: '700', marginTop: 2, lineHeight: 33 },
+  employeeLabel: { fontSize: 14 },
+  employeeValue: { fontSize: 30, fontWeight: '700', marginTop: 4, lineHeight: 38 },
+  employeeHint: { fontSize: 12, marginTop: 4 },
 });

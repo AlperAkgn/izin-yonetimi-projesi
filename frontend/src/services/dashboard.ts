@@ -16,19 +16,36 @@ export type HrDashboard = {
     date: string;
     onLeaveTodayCount: number;
     pendingRequestCount: number;
+    /** Sayının ardındaki liste — "Bugün izinli" kartına basınca gösterilir */
+    onLeaveToday: {
+      userId: number;
+      name: string;
+      leaveType: string;
+      startDate: string;
+      endDate: string;
+    }[];
   };
+  /** Bu yılın onaylanmış izinleri — tür bazında talep ve gün toplamı */
   leaveTypeDistribution: {
     leaveType: string;
     requestCount: number;
     chargedLeaveDays: number;
   }[];
-  criticalLeaveBalances: {
-    userId: number;
-    name: string;
-    annualLeaveEntitlement: number;
-    usedLeaveDays: number;
-    remainingLeaveDays: number;
-  }[];
+  /** Kurum içi limit: kalan izni bu değerin altındaki personel kritiktir */
+  criticalBalanceThreshold: number;
+  /** Şubenin personeli, ada göre sıralı — bakiye kartının da kaynağı */
+  employees: EmployeeLeaveBalance[];
+  /** Şubeye atanmış İK kullanıcıları */
+  hrStaff: { userId: number; name: string }[];
+};
+
+export type EmployeeLeaveBalance = {
+  userId: number;
+  name: string;
+  annualLeaveEntitlement: number;
+  usedLeaveDays: number;
+  remainingLeaveDays: number;
+  isCritical: boolean;
 };
 
 export type AdminDashboard = {

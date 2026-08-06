@@ -15,7 +15,12 @@ namespace LeaveManagementAPI.Models.Dashboard
         public int HrCount { get; set; }
         public LeaveStatusSummaryResponse LeaveStatus { get; set; } = new();
         public List<LeaveTypeDistributionItemResponse> LeaveTypeDistribution { get; set; } = [];
-        public List<CriticalLeaveBalanceResponse> CriticalLeaveBalances { get; set; } = [];
+        /// <summary>Kurum ici limit: bu gun sayisi ve altindaki bakiye kritik sayilir.</summary>
+        public int CriticalBalanceThreshold { get; set; }
+        /// <summary>Subenin personeli (ada gore sirali) — bakiye kartinin da kaynagi.</summary>
+        public List<EmployeeLeaveBalanceResponse> Employees { get; set; } = [];
+        /// <summary>Subeye atanmis Insan Kaynaklari kullanicilari.</summary>
+        public List<BranchStaffResponse> HrStaff { get; set; } = [];
     }
 
     public class AdminDashboardResponse
@@ -39,6 +44,23 @@ namespace LeaveManagementAPI.Models.Dashboard
         public DateTime Date { get; set; }
         public int OnLeaveTodayCount { get; set; }
         public int PendingRequestCount { get; set; }
+        /// <summary>Bugun izinde olan personel — sayinin ardindaki liste.</summary>
+        public List<OnLeaveEmployeeResponse> OnLeaveToday { get; set; } = [];
+    }
+
+    public class OnLeaveEmployeeResponse
+    {
+        public long UserId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public string LeaveType { get; set; } = string.Empty;
+        public DateTime StartDate { get; set; }
+        public DateTime EndDate { get; set; }
+    }
+
+    public class BranchStaffResponse
+    {
+        public long UserId { get; set; }
+        public string Name { get; set; } = string.Empty;
     }
 
     public class LeaveTypeDistributionItemResponse
@@ -48,13 +70,14 @@ namespace LeaveManagementAPI.Models.Dashboard
         public int ChargedLeaveDays { get; set; }
     }
 
-    public class CriticalLeaveBalanceResponse
+    public class EmployeeLeaveBalanceResponse
     {
         public long UserId { get; set; }
         public string Name { get; set; } = string.Empty;
         public int AnnualLeaveEntitlement { get; set; }
         public int UsedLeaveDays { get; set; }
         public int RemainingLeaveDays { get; set; }
+        public bool IsCritical { get; set; }
     }
 
     public class WorkplaceEmployeeCountResponse
