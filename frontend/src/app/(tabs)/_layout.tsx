@@ -53,7 +53,7 @@ function CustomDrawerContent(props: DrawerContentComponentProps) {
 export default function DrawerLayout() {
   const { colors } = useDesign();
   const user = useAuthStore((s) => s.user);
-  const canSeeReports = user?.role === 'HR' || user?.role === 'ADMIN';
+  const canApproveLeave = user?.role === 'HR' || user?.role === 'ADMIN';
 
   return (
     <Drawer
@@ -108,16 +108,6 @@ export default function DrawerLayout() {
         }}
       />
       <Drawer.Screen
-        name="reports"
-        options={{
-          title: 'Raporlar',
-          drawerIcon: ({ color, size }) => (
-            <Feather name="bar-chart-2" size={size} color={color} />
-          ),
-          drawerItemStyle: canSeeReports ? undefined : { display: 'none' },
-        }}
-      />
-      <Drawer.Screen
         name="admin-leave-request"
         options={{
           title: 'Çalışan İzin Yaz',
@@ -134,7 +124,7 @@ export default function DrawerLayout() {
           drawerIcon: ({ color, size }) => (
             <Feather name="check-circle" size={size} color={color} />
           ),
-          drawerItemStyle: canSeeReports ? undefined : { display: 'none' },
+          drawerItemStyle: canApproveLeave ? undefined : { display: 'none' },
         }}
       />
     </Drawer>

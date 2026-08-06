@@ -4,8 +4,9 @@ import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+    Dimensions,
     FlatList,
-    KeyboardAvoidingView,
+    Keyboard,
     Linking,
     Platform,
     Pressable,
@@ -13,6 +14,8 @@ import {
     TextInput,
     View,
 } from 'react-native';
+
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { BackButton } from '@/components/ui/back-button';
@@ -22,12 +25,23 @@ import { MAX_FILE_BYTES, Message, PickedFile } from '@/services/messages';
 import { useMessagesStore } from '@/store/messagesStore';
 import { showAlert } from '@/utils/alert';
 
+/**
+ * Sabit referans. Sohbetin mesajları henüz çekilmemişken seçici `?? []`
+ * yazsaydı her render'da YENİ bir dizi dönerdi; zustand'ın altındaki
+ * useSyncExternalStore bunu "durum değişti" sayıp sonsuz render döngüsüne
+ * girer (Maximum update depth exceeded).
+ */
+const NO_MESSAGES: Message[] = [];
+
 export default function ChatScreen() {
   const { colors } = useDesign();
+  // Android'de kenardan kenara çizim açık (SDK 54 varsayılanı): yazma çubuğu
+  // sistem gezinme çubuğunun altında kalmasın diye alt güvenli alan eklenir.
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const conversations = useMessagesStore((s) => s.conversations);
   const conversation = conversations.find((c) => c.id === id);
-  const messages = useMessagesStore((s) => s.messagesByConv[id] ?? []);
+  const messages = useMessagesStore((s) => s.messagesByConv[id] ?? NO_MESSAGES);
   const openConversation = useMessagesStore((s) => s.openConversation);
   const setActiveConversation = useMessagesStore((s) => s.setActiveConversation);
   const sendMessage = useMessagesStore((s) => s.sendMessage);
@@ -36,6 +50,45 @@ export default function ChatScreen() {
   const [text, setText] = useState('');
   const [pendingFile, setPendingFile] = useState<PickedFile | null>(null);
   const [sending, setSending] = useState(false);
+  const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  /**
+   * Klavye açılınca yazma çubuğunu onun üstüne taşır.
+   *
+   * KeyboardAvoidingView kullanılmıyor: Android'de "kenardan kenara" çizim
+   * açık olduğu için (SDK 54 varsayılanı) klavye açıldığında pencere yeniden
+   * boyutlanmıyor, iOS'ta zaten hiç boyutlanmaz. İki durumda da alta klavye
+   * kadar boşluk bırakmak gerekiyor.
+   *
+   * Yükseklik `endCoordinates.height` ile değil EKRAN koordinatıyla ölçülüyor:
+   * kenardan kenara modda `height` gezinme çubuğunun kapladığı alanı dışarıda
+   * bırakıyor. Ölçülen örnek (Android, 3 tuşlu gezinme): height=310,4 ·
+   * screenY=465,1 · screen=823,5 → gerçek mesafe 358,4; aradaki 48dp tam olarak
+   * gezinme çubuğu. Ekranın tam yüksekliğinden klavyenin üst kenarını çıkarmak
+   * iki durumda da doğru sonucu veriyor. Bu ekranın alt kenarı ekranın alt
+   * kenarıyla aynı olduğundan (başlık üstte) başlık telafisi gerekmiyor.
+   */
+  useEffect(() => {
+    const isIos = Platform.OS === 'ios';
+    const showSub = Keyboard.addListener(
+      isIos ? 'keyboardWillShow' : 'keyboardDidShow',
+      (event) => {
+        const screenHeight = Dimensions.get('screen').height;
+        const lift = Math.max(
+          screenHeight - event.endCoordinates.screenY,
+          event.endCoordinates.height,
+        );
+        setKeyboardHeight(lift);
+      },
+    );
+    const hideSub = Keyboard.addListener(isIos ? 'keyboardWillHide' : 'keyboardDidHide', () =>
+      setKeyboardHeight(0),
+    );
+    return () => {
+      showSub.remove();
+      hideSub.remove();
+    };
+  }, []);
 
   // Geçmiş sunucudan yüklenir; ekran açıkken gelen mesajlar rozet artırmaz
   useEffect(() => {
@@ -156,10 +209,7 @@ export default function ChatScreen() {
         }}
       />
 
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}>
+      <View style={[styles.flex, { paddingBottom: keyboardHeight }]}>
         {!connected && (
           <View style={[styles.offlineBar, { backgroundColor: `${colors.danger}18` }]}>
             <Feather name="wifi-off" size={13} color={colors.danger} />
@@ -192,7 +242,17 @@ export default function ChatScreen() {
           </View>
         )}
 
-        <View style={[styles.inputBar, { backgroundColor: colors.surface, borderColor: colors.border }]}>
+        <View
+          style={[
+            styles.inputBar,
+            {
+              backgroundColor: colors.surface,
+              borderColor: colors.border,
+              // Klavye açıkken gezinme çubuğu zaten klavyenin altında kalıyor;
+              // güvenli alan boşluğu eklenirse arada boşluk oluşur.
+              paddingBottom: Space.sm + (keyboardHeight > 0 ? 0 : insets.bottom),
+            },
+          ]}>
           <Pressable onPress={pickImage} style={styles.iconButton}>
             <Feather name="image" size={22} color={colors.textMuted} />
           </Pressable>
@@ -224,7 +284,7 @@ export default function ChatScreen() {
             <Feather name="send" size={18} color="#fff" />
           </Pressable>
         </View>
-      </KeyboardAvoidingView>
+      </View>
     </View>
   );
 }

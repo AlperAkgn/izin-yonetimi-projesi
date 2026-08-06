@@ -16,6 +16,12 @@ export function countNetWeekdays(start: Date, end: Date): number {
   return count;
 }
 
+/** "2026-08-12T00:00:00Z" → "12.08.2026" (saat dilimi kaymasına düşmeden) */
+export function isoToDisplayDate(iso: string): string {
+  const [year, month, day] = iso.slice(0, 10).split('-');
+  return `${day}.${month}.${year}`;
+}
+
 /** Date → "DD.MM.YYYY" */
 export function formatDate(d: Date): string {
   const dd = String(d.getDate()).padStart(2, '0');

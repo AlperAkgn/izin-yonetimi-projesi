@@ -16,7 +16,8 @@ namespace LeaveManagementAPI.Controller
         AppDbContext context,
         IRealtimePresenceService presenceService) : ControllerBase
     {
-        private const int CriticalLeaveBalanceThreshold = 3;
+        /// <summary>Kurum ici limit — kalan izni bu gun sayisi ve altinda olan personel kritik sayilir.</summary>
+        private const int CriticalLeaveBalanceThreshold = 5;
 
         [HttpGet]
         public async Task<ActionResult<DashboardResponse>> Get(
@@ -89,13 +90,27 @@ namespace LeaveManagementAPI.Controller
             var today = DateTime.SpecifyKind(DateTime.UtcNow.Date, DateTimeKind.Utc);
             var yearStart = new DateTime(today.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc);
             var yearEnd = new DateTime(today.Year, 12, 31, 0, 0, 0, DateTimeKind.Utc);
-            var employees = await context.UserWorkplaces
+            // Panelde sayilarin ardindaki listeler de gosterildigi icin sube
+            // kadrosu tek sorguda cekilip role gore ayrilir.
+            var staff = await context.UserWorkplaces
                 .Where(mapping => mapping.WorkplaceId == workplace.Id
                     && mapping.User.IsActive
-                    && mapping.User.Role == UserRole.EMPLOYEE)
-                .Select(mapping => new { mapping.UserId, mapping.AnnualLeaveCount, mapping.User.Name, mapping.User.Surname })
+                    && (mapping.User.Role == UserRole.EMPLOYEE || mapping.User.Role == UserRole.HR))
+                .Select(mapping => new
+                {
+                    mapping.UserId,
+                    mapping.AnnualLeaveCount,
+                    mapping.User.Name,
+                    mapping.User.Surname,
+                    mapping.User.Role
+                })
                 .ToListAsync(cancellationToken);
+            var employees = staff.Where(member => member.Role == UserRole.EMPLOYEE).ToList();
 
+            // Yil sinirini asan izinler her iki yila da tam gunuyle girer: burada
+            // izin hakki denetiminin (LeaveDayCalculator) yil bazli kirilimi
+            // kullanilmaz, cunku o servis tatil verisi eksik yillarda hata firlatir
+            // ve panelin tamamini dusurur. Ozet icin kayitli gun sayisi yeterlidir.
             var approvedRequests = await context.LeaveRequests
                 .Where(request => request.WorkplaceId == workplace.Id
                     && request.Status == LeaveStatus.APPROVED
@@ -103,34 +118,80 @@ namespace LeaveManagementAPI.Controller
                     && request.EndDate >= yearStart)
                 .ToListAsync(cancellationToken);
 
+            // Grafikte payi buyuk tur ustte olsun diye gune gore azalan sirali
             var typeDistribution = approvedRequests
                 .GroupBy(request => request.LeaveType)
-                .OrderBy(group => group.Key)
                 .Select(group => new LeaveTypeDistributionItemResponse
                 {
                     LeaveType = group.Key.ToString(),
                     RequestCount = group.Count(),
                     ChargedLeaveDays = group.Sum(request => request.ChargedLeaveDays)
                 })
+                .OrderByDescending(item => item.ChargedLeaveDays)
+                .ThenByDescending(item => item.RequestCount)
+                .ThenBy(item => item.LeaveType)
                 .ToList();
 
-            var criticalBalances = employees
+            // Ada gore sirali: hem "subedeki personel" listesi hem de kritik
+            // bakiye karti bu tek diziden turetilir.
+            var employeeBalances = employees
                 .Select(employee =>
                 {
                     var usedDays = approvedRequests
                         .Where(request => request.UserId == employee.UserId)
                         .Sum(request => request.ChargedLeaveDays);
-                    return new CriticalLeaveBalanceResponse
+                    var remainingDays = Math.Max(0, employee.AnnualLeaveCount - usedDays);
+                    return new EmployeeLeaveBalanceResponse
                     {
                         UserId = employee.UserId,
                         Name = $"{employee.Name} {employee.Surname}".Trim(),
                         AnnualLeaveEntitlement = employee.AnnualLeaveCount,
                         UsedLeaveDays = usedDays,
-                        RemainingLeaveDays = Math.Max(0, employee.AnnualLeaveCount - usedDays)
+                        RemainingLeaveDays = remainingDays,
+                        IsCritical = remainingDays <= CriticalLeaveBalanceThreshold
                     };
                 })
-                .Where(item => item.RemainingLeaveDays <= CriticalLeaveBalanceThreshold)
-                .OrderBy(item => item.RemainingLeaveDays)
+                .OrderBy(item => item.Name)
+                .ToList();
+
+            var hrStaff = staff
+                .Where(member => member.Role == UserRole.HR)
+                .Select(member => new BranchStaffResponse
+                {
+                    UserId = member.UserId,
+                    Name = $"{member.Name} {member.Surname}".Trim()
+                })
+                .OrderBy(item => item.Name)
+                .ToList();
+
+            // Ayni gune denk gelen birden fazla onayli kaydi olan personel bir
+            // kez sayilsin diye kisi bazinda tekillestirilir.
+            var onLeaveRows = await context.LeaveRequests
+                .Where(request => request.WorkplaceId == workplace.Id
+                    && request.Status == LeaveStatus.APPROVED
+                    && request.StartDate <= today && request.EndDate >= today)
+                .Select(request => new
+                {
+                    request.UserId,
+                    request.User.Name,
+                    request.User.Surname,
+                    request.LeaveType,
+                    request.StartDate,
+                    request.EndDate
+                })
+                .ToListAsync(cancellationToken);
+            var onLeaveToday = onLeaveRows
+                .GroupBy(row => row.UserId)
+                .Select(group => group.OrderBy(row => row.EndDate).First())
+                .Select(row => new OnLeaveEmployeeResponse
+                {
+                    UserId = row.UserId,
+                    Name = $"{row.Name} {row.Surname}".Trim(),
+                    LeaveType = row.LeaveType.ToString(),
+                    StartDate = row.StartDate,
+                    EndDate = row.EndDate
+                })
+                .OrderBy(item => item.EndDate)
                 .ThenBy(item => item.Name)
                 .ToList();
 
@@ -138,20 +199,26 @@ namespace LeaveManagementAPI.Controller
             {
                 HrName = hrName,
                 Workplace = new WorkplaceSummaryResponse { Id = workplace.Id, Name = workplace.Name },
-                EmployeeCount = employees.Count,
-                HrCount = await context.UserWorkplaces.CountAsync(mapping => mapping.WorkplaceId == workplace.Id
-                    && mapping.User.IsActive && mapping.User.Role == UserRole.HR, cancellationToken),
+                EmployeeCount = employeeBalances.Count,
+                HrCount = hrStaff.Count,
                 LeaveStatus = new LeaveStatusSummaryResponse
                 {
                     Date = today,
-                    OnLeaveTodayCount = await context.LeaveRequests.CountAsync(request => request.WorkplaceId == workplace.Id
-                        && request.Status == LeaveStatus.APPROVED
-                        && request.StartDate <= today && request.EndDate >= today, cancellationToken),
+                    OnLeaveTodayCount = onLeaveToday.Count,
+                    OnLeaveToday = onLeaveToday,
+                    // Kart Izin Onay ekranina goturuyor; sayi o ekranin
+                    // kapsamiyla ayni olmali. HR kendi talebini ve diger
+                    // HR'lerin taleplerini oradan goremez (LeaveRequests
+                    // workplaces/{id} ayni filtreyi uygular).
                     PendingRequestCount = await context.LeaveRequests.CountAsync(request => request.WorkplaceId == workplace.Id
-                        && request.Status == LeaveStatus.PENDING, cancellationToken)
+                        && request.Status == LeaveStatus.PENDING
+                        && request.UserId != hrUserId
+                        && request.User.Role == UserRole.EMPLOYEE, cancellationToken)
                 },
                 LeaveTypeDistribution = typeDistribution,
-                CriticalLeaveBalances = criticalBalances
+                CriticalBalanceThreshold = CriticalLeaveBalanceThreshold,
+                Employees = employeeBalances,
+                HrStaff = hrStaff
             };
         }
 
