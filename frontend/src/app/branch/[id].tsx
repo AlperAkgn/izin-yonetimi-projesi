@@ -4,6 +4,7 @@ import { useLocalSearchParams, Stack, useFocusEffect } from 'expo-router';
 import Feather from '@expo/vector-icons/Feather';
 
 import { ThemedText } from '@/components/themed-text';
+import { Avatar } from '@/components/ui/avatar';
 import { BackButton } from '@/components/ui/back-button';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -98,6 +99,92 @@ function CreateStaffForm({ branchId, onDone }: { branchId: string; onDone: () =>
   );
 }
 
+// ---- Bilgi düzeltme formu ----
+/**
+ * Yanlış girilmiş ad/soyad/telefon buradan düzeltilir. Değişiklik User
+ * kaydına yazıldığı için kişinin kendi panelindeki selamlama da güncellenir.
+ *
+ * E-posta salt okunur: hesabı tekil kılan alan o — giriş, geçici şifre
+ * postası ve mevcut kayıtlar o adrese bağlı.
+ */
+function EditStaffForm({
+  user,
+  branchId,
+  onDone,
+}: {
+  user: AppUser;
+  branchId: string;
+  onDone: () => void;
+}) {
+  const { colors } = useDesign();
+  const updateUser = useUsersStore((s) => s.updateUser);
+  const [firstName, setFirstName] = useState(user.firstName);
+  const [lastName, setLastName] = useState(user.lastName);
+  const [phone, setPhone] = useState(user.phone);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSave = async () => {
+    if (firstName.trim().length === 0) return setError('İsim boş olamaz');
+    if (lastName.trim().length === 0) return setError('Soyisim boş olamaz');
+    if (!isValidPhone(phone)) return setError('Geçerli bir telefon numarası gir');
+    setError('');
+
+    setSaving(true);
+    const result = await updateUser(branchId, user.id, {
+      firstName: firstName.trim(),
+      lastName: lastName.trim(),
+      phone: phone.trim(),
+    });
+    setSaving(false);
+
+    if (!result.ok) return setError(result.message ?? 'Güncellenemedi');
+
+    showToast({
+      message: `${firstName.trim()} ${lastName.trim()} bilgileri güncellendi.`,
+      tone: 'success',
+    });
+    onDone();
+  };
+
+  return (
+    <Card>
+      <ThemedText style={styles.formTitle}>Bilgileri Düzenle</ThemedText>
+      <LabeledInput label="İsim" maxLength={30} value={firstName} onChangeText={setFirstName} />
+      <LabeledInput label="Soyisim" maxLength={30} value={lastName} onChangeText={setLastName} />
+      <LabeledInput
+        label="Telefon"
+        placeholder="Örn: 05XX XXX XX XX"
+        maxLength={15}
+        keyboardType="phone-pad"
+        value={phone}
+        onChangeText={setPhone}
+        onBlur={() => setPhone(normalizePhone(phone))}
+      />
+
+      <ThemedText style={[styles.roleLabel, { color: colors.textMuted }]}>E-posta</ThemedText>
+      <View
+        style={[
+          styles.readonlyBox,
+          { backgroundColor: colors.surfaceRaised, borderColor: colors.border },
+        ]}>
+        <Feather name="lock" size={14} color={colors.textFaint} />
+        <ThemedText style={[styles.readonlyText, { color: colors.textMuted }]} numberOfLines={1}>
+          {user.email}
+        </ThemedText>
+      </View>
+      <ThemedText style={[styles.hint, { color: colors.textFaint }]}>
+        E-posta hesabı tekil kılan alandır, değiştirilemez. Kişi başka bir adres kullanacaksa yeni
+        hesap açılmalı.
+      </ThemedText>
+
+      {error !== '' && <ThemedText style={{ color: colors.danger, fontSize: 13 }}>{error}</ThemedText>}
+      <Button label="Kaydet" onPress={handleSave} loading={saving} />
+      <Button label="Vazgeç" onPress={onDone} variant="ghost" />
+    </Card>
+  );
+}
+
 // ---- Taşıma formu ----
 function MoveStaffForm({ user, currentBranchId, onDone }: { user: AppUser; currentBranchId: string; onDone: () => void }) {
   const { colors } = useDesign();
@@ -150,15 +237,23 @@ function MoveStaffForm({ user, currentBranchId, onDone }: { user: AppUser; curre
 }
 
 // ---- Personel satırı ----
-function PersonRow({ user, onMove, onDelete }: { user: AppUser; onMove: () => void; onDelete: () => void }) {
+function PersonRow({
+  user,
+  onEdit,
+  onMove,
+  onDelete,
+}: {
+  user: AppUser;
+  onEdit: () => void;
+  onMove: () => void;
+  onDelete: () => void;
+}) {
   const { colors } = useDesign();
-  const initials = `${user.firstName[0] ?? ''}${user.lastName[0] ?? ''}`.toUpperCase();
+  const fullName = `${user.firstName} ${user.lastName}`;
   return (
     <Card>
       <View style={styles.personRow}>
-        <View style={[styles.avatar, { backgroundColor: colors.primarySoft }]}>
-          <ThemedText style={[styles.avatarText, { color: colors.primary }]}>{initials}</ThemedText>
-        </View>
+        <Avatar firstName={user.firstName} lastName={user.lastName} size={44} />
         <View style={styles.personBody}>
           <View style={styles.personNameRow}>
             <ThemedText style={styles.personName}>{user.firstName} {user.lastName}</ThemedText>
@@ -175,10 +270,25 @@ function PersonRow({ user, onMove, onDelete }: { user: AppUser; onMove: () => vo
             {user.email} · {user.annualLeaveCount} gün izin
           </ThemedText>
         </View>
-        <Pressable onPress={onMove} style={styles.iconBtn}>
+        <Pressable
+          onPress={onEdit}
+          accessibilityRole="button"
+          accessibilityLabel={`${fullName} bilgilerini düzenle`}
+          style={styles.iconBtn}>
+          <Feather name="edit-2" size={18} color={colors.textMuted} />
+        </Pressable>
+        <Pressable
+          onPress={onMove}
+          accessibilityRole="button"
+          accessibilityLabel={`${fullName} kişisini başka şubeye taşı`}
+          style={styles.iconBtn}>
           <Feather name="repeat" size={18} color={colors.textMuted} />
         </Pressable>
-        <Pressable onPress={onDelete} style={styles.iconBtn}>
+        <Pressable
+          onPress={onDelete}
+          accessibilityRole="button"
+          accessibilityLabel={`${fullName} kişisini sil`}
+          style={styles.iconBtn}>
           <Feather name="trash-2" size={18} color={colors.danger} />
         </Pressable>
       </View>
@@ -187,7 +297,13 @@ function PersonRow({ user, onMove, onDelete }: { user: AppUser; onMove: () => vo
 }
 
 // ---- Ana ekran ----
-type Mode = 'view' | 'create' | { moveUser: AppUser };
+type Mode =
+  | { kind: 'view' }
+  | { kind: 'create' }
+  | { kind: 'edit'; user: AppUser }
+  | { kind: 'move'; user: AppUser };
+
+const VIEW_MODE: Mode = { kind: 'view' };
 
 export default function BranchDetailScreen() {
   const { colors } = useDesign();
@@ -200,7 +316,7 @@ export default function BranchDetailScreen() {
   const fetchBranch = useUsersStore((s) => s.fetchBranch);
   const deleteUser = useUsersStore((s) => s.deleteUser);
 
-  const [mode, setMode] = useState<Mode>('view');
+  const [mode, setMode] = useState<Mode>(VIEW_MODE);
 
   // Doğrudan URL ile gelinirse şube listesi henüz yüklenmemiş olabilir
   useEffect(() => {
@@ -251,26 +367,20 @@ export default function BranchDetailScreen() {
     />
   );
 
-  if (mode === 'create') {
+  if (mode.kind !== 'view') {
+    const closeForm = () => setMode(VIEW_MODE);
     return (
       <View style={[styles.container, { backgroundColor: colors.bg }]}>
         {header}
         <ScrollView contentContainerStyle={styles.scrollContent}>
           <View style={styles.contentWrap}>
-            <CreateStaffForm branchId={id} onDone={() => setMode('view')} />
-          </View>
-        </ScrollView>
-      </View>
-    );
-  }
-
-  if (typeof mode === 'object') {
-    return (
-      <View style={[styles.container, { backgroundColor: colors.bg }]}>
-        {header}
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          <View style={styles.contentWrap}>
-            <MoveStaffForm user={mode.moveUser} currentBranchId={id} onDone={() => setMode('view')} />
+            {mode.kind === 'create' && <CreateStaffForm branchId={id} onDone={closeForm} />}
+            {mode.kind === 'edit' && (
+              <EditStaffForm user={mode.user} branchId={id} onDone={closeForm} />
+            )}
+            {mode.kind === 'move' && (
+              <MoveStaffForm user={mode.user} currentBranchId={id} onDone={closeForm} />
+            )}
           </View>
         </ScrollView>
       </View>
@@ -298,7 +408,7 @@ export default function BranchDetailScreen() {
             <ThemedText style={{ color: colors.danger, fontSize: 13 }}>{usersError}</ThemedText>
           )}
 
-          <Button label="+ Yeni Personel Oluştur" onPress={() => setMode('create')} />
+          <Button label="+ Yeni Personel Oluştur" onPress={() => setMode({ kind: 'create' })} />
 
           <View style={styles.section}>
             <ThemedText style={styles.sectionTitle}>İnsan Kaynakları ({hrUsers.length})</ThemedText>
@@ -306,7 +416,13 @@ export default function BranchDetailScreen() {
               <ThemedText style={[styles.empty, { color: colors.textMuted }]}>Bu kategoride kimse yok</ThemedText>
             ) : (
               hrUsers.map((u) => (
-                <PersonRow key={u.id} user={u} onMove={() => setMode({ moveUser: u })} onDelete={() => handleDelete(u)} />
+                <PersonRow
+                  key={u.id}
+                  user={u}
+                  onEdit={() => setMode({ kind: 'edit', user: u })}
+                  onMove={() => setMode({ kind: 'move', user: u })}
+                  onDelete={() => handleDelete(u)}
+                />
               ))
             )}
           </View>
@@ -317,7 +433,13 @@ export default function BranchDetailScreen() {
               <ThemedText style={[styles.empty, { color: colors.textMuted }]}>Bu kategoride kimse yok</ThemedText>
             ) : (
               employeeUsers.map((u) => (
-                <PersonRow key={u.id} user={u} onMove={() => setMode({ moveUser: u })} onDelete={() => handleDelete(u)} />
+                <PersonRow
+                  key={u.id}
+                  user={u}
+                  onEdit={() => setMode({ kind: 'edit', user: u })}
+                  onMove={() => setMode({ kind: 'move', user: u })}
+                  onDelete={() => handleDelete(u)}
+                />
               ))
             )}
           </View>
@@ -347,8 +469,6 @@ const styles = StyleSheet.create({
   pickName: { fontSize: 14, fontWeight: '600' },
   pickDetail: { fontSize: 12 },
   personRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
-  avatar: { width: 44, height: 44, borderRadius: Radius.pill, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { fontWeight: '700', fontSize: 15 },
   personBody: { flex: 1, gap: 2, marginLeft: Space.xs },
   personNameRow: { flexDirection: 'row', alignItems: 'center', gap: Space.sm },
   personName: { fontSize: 15, fontWeight: '600' },
@@ -356,4 +476,15 @@ const styles = StyleSheet.create({
   inactiveTag: { paddingHorizontal: Space.sm, paddingVertical: 2, borderRadius: Radius.pill },
   inactiveTagText: { fontSize: 11, fontWeight: '600' },
   iconBtn: { padding: Space.sm },
+  // Değiştirilemeyen alan: girdi gibi durur ama kilit ikonuyla salt okunur
+  readonlyBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Space.sm,
+    borderWidth: 1,
+    borderRadius: Radius.md,
+    paddingHorizontal: Space.lg,
+    paddingVertical: 14,
+  },
+  readonlyText: { fontSize: 15, flexShrink: 1 },
 });

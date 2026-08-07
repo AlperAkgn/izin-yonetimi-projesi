@@ -20,6 +20,16 @@ function initialsOf(firstName: string, lastName: string): string {
   return `${first}${last}`.toLocaleUpperCase('tr-TR');
 }
 
+/**
+ * Tek parça isimleri ada/soyada böler: "Ada Lovelace King" → ["Ada", "Lovelace King"].
+ * Sohbet listesi ve kişi listeleri ismi tek metin olarak tutuyor; Avatar ise
+ * baş harfleri iki parçadan üretiyor.
+ */
+export function splitFullName(fullName: string): [string, string] {
+  const parts = fullName.trim().split(/\s+/).filter((p) => p.length > 0);
+  return [parts[0] ?? '', parts.slice(1).join(' ')];
+}
+
 /** Baş harf avatarı — fotoğraf yok, isimden türeyen renkli daire */
 export function Avatar({
   firstName,

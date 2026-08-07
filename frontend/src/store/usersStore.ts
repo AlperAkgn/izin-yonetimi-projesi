@@ -41,6 +41,12 @@ type UsersState = {
   fetchBranches: (branchIds: string[]) => Promise<void>;
   fetchDeleted: () => Promise<void>;
   addUser: (branchId: string, data: employeeApi.CreateBranchUserInput) => Promise<ActionResult>;
+  /** Ad/soyad/telefon düzeltmesi — e-posta değiştirilemez */
+  updateUser: (
+    branchId: string,
+    userId: string,
+    data: employeeApi.UpdateBranchUserInput,
+  ) => Promise<ActionResult>;
   moveToBranch: (userId: string, fromBranchId: string, targetBranchId: string) => Promise<ActionResult>;
   /** Soft delete — kullanıcı Silinenler'e düşer, geri alınabilir */
   deleteUser: (userId: string, branchId: string) => Promise<ActionResult>;
@@ -88,6 +94,21 @@ export const useUsersStore = create<UsersState>((set, get) => ({
       const user = await employeeApi.createBranchUser(branchId, data);
       set((state) => ({
         byBranch: { ...state.byBranch, [branchId]: [...(state.byBranch[branchId] ?? []), user] },
+      }));
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, message: getErrorMessage(error) };
+    }
+  },
+
+  updateUser: async (branchId, userId, data) => {
+    try {
+      const updated = await employeeApi.updateBranchUser(branchId, userId, data);
+      set((state) => ({
+        byBranch: {
+          ...state.byBranch,
+          [branchId]: (state.byBranch[branchId] ?? []).map((u) => (u.id === userId ? updated : u)),
+        },
       }));
       return { ok: true };
     } catch (error) {

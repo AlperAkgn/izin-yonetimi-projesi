@@ -1,10 +1,10 @@
 import Feather from '@expo/vector-icons/Feather';
 import { router, useFocusEffect } from 'expo-router';
-import { Children, useCallback, useState, type ReactNode } from 'react';
-import { Pressable, RefreshControl, StyleSheet, View } from 'react-native';
+import { Children, useCallback, useEffect, useState, type ReactNode } from 'react';
+import { AppState, Pressable, RefreshControl, StyleSheet, View } from 'react-native';
 
 import { ThemedText } from '@/components/themed-text';
-import { Avatar } from '@/components/ui/avatar';
+import { Avatar, splitFullName } from '@/components/ui/avatar';
 import { Screen } from '@/components/ui/screen';
 import { Card } from '@/components/ui/card';
 import { DetailSheet } from '@/components/ui/detail-sheet';
@@ -14,8 +14,10 @@ import { useDesign } from '@/hooks/use-design';
 import { useWideLayout } from '@/hooks/use-columns';
 import { Palette, Space, Radius } from '@/constants/design';
 import { getErrorMessage } from '@/services/api';
+import { fetchProfile } from '@/services/auth';
 import { fetchDashboard } from '@/services/dashboard';
 import { leaveTypeColor, leaveTypeEmoji, leaveTypeFromApi } from '@/constants/leave';
+import { ROLE_LABEL } from '@/constants/roles';
 import { useAuthStore } from '@/store/authStore';
 import { useLeaveRequestsStore } from '@/store/leaveRequestsStore';
 import { formatDate, isoToDisplayDate } from '@/utils/date';
@@ -23,12 +25,6 @@ import { formatDate, isoToDisplayDate } from '@/utils/date';
 import type { FeatherName } from '@/components/ui/icon';
 import type { AuthUser } from '@/store/authStore';
 import type { AdminDashboard, EmployeeLeaveBalance, HrDashboard } from '@/services/dashboard';
-
-const ROLE_LABEL: Record<string, string> = {
-  EMPLOYEE: 'Personel',
-  HR: 'İnsan Kaynakları',
-  ADMIN: 'Sistem Yöneticisi',
-};
 
 /** Kritik olmayan personelden kaç kişinin "limite en yakın" listesine gireceği */
 const WATCHLIST_SIZE = 3;
@@ -147,11 +143,11 @@ function MetaRow({ label, value, strong }: { label: string; value: string; stron
 /** Detay listelerindeki kişi satırı */
 function PersonRow({ name, meta, tone }: { name: string; meta?: string; tone?: string }) {
   const { colors } = useDesign();
-  const [firstName, ...rest] = name.split(' ');
+  const [firstName, lastName] = splitFullName(name);
 
   return (
     <View style={styles.personRow}>
-      <Avatar firstName={firstName ?? ''} lastName={rest.join(' ')} size={36} />
+      <Avatar firstName={firstName} lastName={lastName} size={36} />
       <View style={styles.grow}>
         <ThemedText style={styles.personName} numberOfLines={1}>{name}</ThemedText>
         {meta !== undefined && (
@@ -700,7 +696,10 @@ function DashboardHeader({ user }: { user: AuthUser | null }) {
             {user ? ROLE_LABEL[user.role] : ''}
           </ThemedText>
         </View>
-        {user?.branchName && (
+        {/* Admin'in veritabanında şube ataması olabiliyor ama paneli kurum
+            geneli — tek bir şube yazmak yanıltıcı olurdu. İK ve personelde
+            panel zaten kendi şubesine dayandığı için orada gösteriliyor. */}
+        {user?.role !== 'ADMIN' && user?.branchName && (
           <ThemedText style={[styles.branch, { color: colors.textMuted }]}>
             📍 {user.branchName}
           </ThemedText>
@@ -718,6 +717,7 @@ function DashboardHeader({ user }: { user: AuthUser | null }) {
 export default function DashboardScreen() {
   const { colors } = useDesign();
   const user = useAuthStore((s) => s.user);
+  const refreshProfile = useAuthStore((s) => s.refreshProfile);
 
   const [hr, setHr] = useState<HrDashboard | null>(null);
   const [admin, setAdmin] = useState<AdminDashboard | null>(null);
@@ -727,6 +727,11 @@ export default function DashboardScreen() {
   const canSeeDashboard = user?.role === 'ADMIN' || user?.role === 'HR';
 
   const load = useCallback(async () => {
+    // Admin ad/soyad düzeltmiş olabilir: selamlama bir sonraki girişi
+    // beklemeden güncellensin diye profil her yüklemede tazelenir.
+    const profile = await fetchProfile();
+    if (profile) refreshProfile(profile);
+
     if (!canSeeDashboard) return;
     try {
       const data = await fetchDashboard();
@@ -736,7 +741,19 @@ export default function DashboardScreen() {
     } catch (err) {
       setError(getErrorMessage(err));
     }
-  }, [canSeeDashboard]);
+  }, [canSeeDashboard, refreshProfile]);
+
+  /**
+   * Uygulama arka plandan dönünce de tazele. Panel açıkken admin ismi
+   * değiştirirse gezinme odağı değişmediği için useFocusEffect tetiklenmez;
+   * telefonu tekrar eline aldığında güncel isim görünsün.
+   */
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void load();
+    });
+    return () => subscription.remove();
+  }, [load]);
 
   // Drawer, Panel'i açık tuttuğu için mount'a bağlanamayız: şube/personel
   // silme gibi işlemlerden dönüşte sayaçlar güncel kalsın diye her

@@ -7,6 +7,7 @@ import {
 import { router } from 'expo-router';
 import { Drawer } from 'expo-router/drawer';
 import { Pressable, StyleSheet, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { ThemedText } from '@/components/themed-text';
 import { Radius, Space } from '@/constants/design';
@@ -15,6 +16,10 @@ import { useAuthStore } from '@/store/authStore';
 
 function CustomDrawerContent(props: DrawerContentComponentProps) {
   const { colors } = useDesign();
+  // Android SDK 54 kenardan kenara çiziyor: çıkış düğmesi çekmecenin dibine
+  // yaslandığı için sistem gezinme çubuğunun (geri/ana ekran/sekmeler) altında
+  // kalıyordu. Alt güvenli alan kadar dolgu ekleyip yazıyı çubuğun üstüne alıyoruz.
+  const insets = useSafeAreaInsets();
   const logout = useAuthStore((s) => s.logout);
 
   const handleLogout = () => {
@@ -36,11 +41,14 @@ function CustomDrawerContent(props: DrawerContentComponentProps) {
 
       <Pressable
         onPress={handleLogout}
+        accessibilityRole="button"
+        accessibilityLabel="Çıkış yap"
         style={({ pressed }) => [
           styles.logoutButton,
           {
             borderTopColor: colors.border,
             backgroundColor: pressed ? colors.surfaceRaised : 'transparent',
+            paddingBottom: Space.lg + insets.bottom,
           },
         ]}>
         <Feather name="log-out" size={20} color={colors.danger} />

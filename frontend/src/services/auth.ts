@@ -2,9 +2,9 @@ import { Platform } from 'react-native';
 
 import { apiFetch, getErrorMessage } from '@/services/api';
 
-import type { AuthUser, Role } from '@/store/authStore';
+import type { AuthProfile, AuthUser, Role } from '@/store/authStore';
 
-export type { AuthUser, Role };
+export type { AuthProfile, AuthUser, Role };
 
 type LoginResponseDto = {
   token: string;
@@ -36,17 +36,34 @@ type LoginResult =
   | { success: true; user: AuthUser; token: string }
   | { success: false; message: string };
 
-function toAuthUser(me: CurrentUserDto, isFirstLogin: boolean): AuthUser {
+function toProfile(me: CurrentUserDto): AuthProfile {
   return {
-    id: String(me.id),
     email: me.mail,
     name: `${me.name} ${me.surname}`.trim(),
     role: me.role as Role,
     branchId: me.workplaceId != null ? String(me.workplaceId) : null,
     branchName: me.workplaceName ?? null,
     entitlement: me.annualLeaveCount ?? null,
-    isFirstLogin,
   };
+}
+
+function toAuthUser(me: CurrentUserDto, isFirstLogin: boolean): AuthUser {
+  return { id: String(me.id), ...toProfile(me), isFirstLogin };
+}
+
+/**
+ * GET /api/Users/me — yalnızca profil alanlarını tazeler.
+ *
+ * Admin, kullanıcının adını veya telefonunu düzeltebiliyor; oturum açıkken
+ * de güncel görünsün diye panel her odaklandığında çağrılır. Hata yutulur:
+ * ağ koptuğunda oturumdaki eski bilgi kalsın, kullanıcı dışarı atılmasın.
+ */
+export async function fetchProfile(): Promise<AuthProfile | null> {
+  try {
+    return toProfile(await apiFetch<CurrentUserDto>('/api/Users/me'));
+  } catch {
+    return null;
+  }
 }
 
 /**

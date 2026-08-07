@@ -1,3 +1,4 @@
+import { roleLabel } from '@/constants/roles';
 import { apiFetch } from '@/services/api';
 
 import type { AppUser, UserRole } from '@/store/usersStore';
@@ -11,12 +12,6 @@ import type { AppUser, UserRole } from '@/store/usersStore';
 
 /** Sohbet ekranındaki kişi — rol etiketi Türkçe gösterilir */
 export type Employee = { id: string; name: string; role: string };
-
-const ROLE_LABEL: Record<string, string> = {
-  EMPLOYEE: 'Personel',
-  HR: 'İnsan Kaynakları',
-  ADMIN: 'Sistem Yöneticisi',
-};
 
 type WorkplaceUserDto = {
   id: number;
@@ -76,6 +71,35 @@ export async function createBranchUser(branchId: string, data: CreateBranchUserI
   return toAppUser(dto, branchId);
 }
 
+/** Yanlış girilmiş kimlik bilgisinin düzeltilmesi — e-posta bilerek yok */
+export type UpdateBranchUserInput = {
+  firstName: string;
+  lastName: string;
+  phone: string;
+};
+
+/**
+ * Ad, soyad ve telefonu günceller. Değişiklik User kaydında olduğu için
+ * kişinin kendi hesabına da yansır (/api/Users/me yeni ismi döner).
+ *
+ * E-posta gönderilmiyor: hesabı tekil kılan alan o — backend de kabul etmez.
+ */
+export async function updateBranchUser(
+  branchId: string,
+  userId: string,
+  data: UpdateBranchUserInput,
+): Promise<AppUser> {
+  const dto = await apiFetch<WorkplaceUserDto>(`/api/Workplaces/${branchId}/users/${userId}`, {
+    method: 'PUT',
+    body: {
+      name: data.firstName,
+      surname: data.lastName,
+      phone: data.phone,
+    },
+  });
+  return toAppUser(dto, branchId);
+}
+
 export async function moveBranchUser(
   branchId: string,
   userId: string,
@@ -122,7 +146,7 @@ function toDeletedUser(dto: DeletedUserDto): DeletedUser {
     firstName: dto.name,
     lastName: dto.surname,
     email: dto.mail,
-    role: ROLE_LABEL[dto.role] ?? dto.role,
+    role: roleLabel(dto.role),
     branchId: dto.workplaceId != null ? String(dto.workplaceId) : null,
     branchName: dto.workplaceName ?? null,
     deletedAt: dto.deletedAt,
@@ -148,6 +172,6 @@ export async function fetchContacts(): Promise<Employee[]> {
   return list.map((dto) => ({
     id: String(dto.id),
     name: `${dto.name} ${dto.surname}`.trim(),
-    role: ROLE_LABEL[dto.role] ?? dto.role,
+    role: roleLabel(dto.role),
   }));
 }

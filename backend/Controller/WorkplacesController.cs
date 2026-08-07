@@ -224,6 +224,61 @@ namespace LeaveManagementAPI.Controller
                 ToUserResponse(user, request.AnnualLeaveCount ?? workplace.LeaveCount));
         }
 
+        /// <summary>
+        /// Kullanicinin ad, soyad ve telefonunu duzeltir (yanlis girilmis olabilir).
+        /// Degisiklik dogrudan User kaydinda oldugu icin kisinin kendi hesabina da
+        /// yansir — /api/Users/me bir sonraki cagrida yeni ismi doner.
+        ///
+        /// Mail GUNCELLENMEZ: hesabi tekil kilan alan o. Giris, gecici sifre
+        /// postasi ve mevcut kayitlar bu adrese bagli oldugu icin degistirmek
+        /// yeni hesap acmakla aynidir.
+        /// </summary>
+        [HttpPut("{id:long}/users/{userId:long}")]
+        public async Task<ActionResult<WorkplaceUserResponse>> UpdateUser(
+            long id,
+            long userId,
+            UpdateWorkplaceUserRequest request,
+            CancellationToken cancellationToken)
+        {
+            var auth = await GetActiveAdminOrError();
+            if (auth.ErrorResult is not null)
+            {
+                return auth.ErrorResult;
+            }
+
+            if (!await HasWorkplaceAccess(id, auth.AdminId))
+            {
+                return NotFound(new { message = "Is yeri bulunamadi." });
+            }
+
+            if (!HasRequiredTextFields(request.Name, request.Surname, request.Phone))
+            {
+                return BadRequest(new { message = "Ad, soyad ve telefon bos olamaz." });
+            }
+
+            var userWorkplace = await _context.UserWorkplaces
+                .Include(mapping => mapping.User)
+                .SingleOrDefaultAsync(
+                    mapping => mapping.UserId == userId && mapping.WorkplaceId == id,
+                    cancellationToken);
+            if (userWorkplace is null)
+            {
+                return NotFound(new { message = "Kullanici bu is yerinde bulunamadi." });
+            }
+
+            if (userWorkplace.User.Role == UserRole.ADMIN)
+            {
+                return BadRequest(new { message = "Yonetici hesabi bu endpoint ile duzenlenemez." });
+            }
+
+            userWorkplace.User.Name = request.Name.Trim();
+            userWorkplace.User.Surname = request.Surname.Trim();
+            userWorkplace.User.Phone = request.Phone.Trim();
+            await _context.SaveChangesAsync(cancellationToken);
+
+            return Ok(ToUserResponse(userWorkplace.User, userWorkplace.AnnualLeaveCount));
+        }
+
         [HttpPut("{id:long}/users/{userId:long}/annual-leave-count")]
         public async Task<ActionResult<WorkplaceUserResponse>> UpdateUserAnnualLeaveCount(
             long id,

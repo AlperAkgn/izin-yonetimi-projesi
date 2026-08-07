@@ -1,5 +1,6 @@
 import { Platform } from 'react-native';
 
+import { roleLabel } from '@/constants/roles';
 import { API_BASE_URL, apiFetch } from '@/services/api';
 import { useAuthStore } from '@/store/authStore';
 
@@ -111,16 +112,70 @@ export function mapMessage(dto: MessageDto, myUserId: string): Message {
   };
 }
 
+const MONTHS_TR = [
+  'Ocak',
+  'Şubat',
+  'Mart',
+  'Nisan',
+  'Mayıs',
+  'Haziran',
+  'Temmuz',
+  'Ağustos',
+  'Eylül',
+  'Ekim',
+  'Kasım',
+  'Aralık',
+];
+
+/** Takvim günü farkı — saat farkı değil: bugün 0, dün 1 */
+function calendarDayDiff(from: Date, to: Date): number {
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  return Math.round((startOfDay(from) - startOfDay(to)) / (24 * 60 * 60 * 1000));
+}
+
+/** Baloncuğun köşesindeki saat: "14:26" */
+export function clockLabel(iso: string): string {
+  return new Date(iso).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+}
+
 /** Sohbet listesindeki zaman etiketi: bugün "14:32", dün "Dün", eskisi "12.08" */
 export function timeLabel(iso: string): string {
   const date = new Date(iso);
-  const now = new Date();
-  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  const dayDiff = Math.round((startOfDay(now) - startOfDay(date)) / (24 * 60 * 60 * 1000));
+  const dayDiff = calendarDayDiff(new Date(), date);
 
-  if (dayDiff <= 0) return date.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
+  if (dayDiff <= 0) return clockLabel(iso);
   if (dayDiff === 1) return 'Dün';
   return date.toLocaleDateString('tr-TR', { day: '2-digit', month: '2-digit' });
+}
+
+/**
+ * Mesaj listesindeki gün ayracı: "Bugün", "Dün", "6 Ağustos" —
+ * geçmiş yıllarda yıl da eklenir ("6 Ağustos 2025").
+ *
+ * Ay adları elle yazılı: Intl'in `month: 'long'` çıktısı Hermes'te cihazın
+ * ICU verisine bağlı, ayracın Türkçe kalması garanti olsun.
+ */
+export function dayLabel(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  const dayDiff = calendarDayDiff(now, date);
+
+  if (dayDiff <= 0) return 'Bugün';
+  if (dayDiff === 1) return 'Dün';
+
+  const year = date.getFullYear() === now.getFullYear() ? '' : ` ${date.getFullYear()}`;
+  return `${date.getDate()} ${MONTHS_TR[date.getMonth()]}${year}`;
+}
+
+/** İki damga aynı takvim gününde mi? Gün ayracının nereye gireceğini belirler. */
+export function isSameDay(a: string, b: string): boolean {
+  const x = new Date(a);
+  const y = new Date(b);
+  return (
+    x.getFullYear() === y.getFullYear() &&
+    x.getMonth() === y.getMonth() &&
+    x.getDate() === y.getDate()
+  );
 }
 
 export function mapConversation(dto: ConversationDto): Conversation {
@@ -133,7 +188,8 @@ export function mapConversation(dto: ConversationDto): Conversation {
   return {
     id: String(dto.partnerId),
     name: dto.partnerName,
-    role: dto.partnerRole,
+    // Backend rol kodu gönderir ("HR"); listede Türkçe etiketi gösteriliyor
+    role: roleLabel(dto.partnerRole),
     lastMessage: preview,
     lastAt: timeLabel(dto.lastTimestamp),
     lastTs: new Date(dto.lastTimestamp).getTime(),
