@@ -1,15 +1,18 @@
 import Feather from '@expo/vector-icons/Feather';
 import { router, Stack } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import { FlatList, Platform, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { FlatList, StyleSheet, View } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 
 import { ThemedText } from '@/components/themed-text';
 import { Avatar, splitFullName } from '@/components/ui/avatar';
 import { BackButton } from '@/components/ui/back-button';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ListRow } from '@/components/ui/list-row';
 import { Screen } from '@/components/ui/screen';
-import { Radius, Space } from '@/constants/design';
+import { SearchInput } from '@/components/ui/search-input';
+import { Space } from '@/constants/design';
+import { NARROW_MAX_WIDTH } from '@/constants/layout';
 import { useDesign } from '@/hooks/use-design';
 import { useWideLayout } from '@/hooks/use-columns';
 import { getErrorMessage } from '@/services/api';
@@ -80,29 +83,12 @@ export default function NewChatScreen() {
           Sohbet başlatmak için bir kişi seç.
         </ThemedText>
 
-        <View
-          style={[styles.searchBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-          <Feather name="search" size={15} color={colors.textFaint} />
-          <TextInput
-            style={[styles.searchInput, { color: colors.text }]}
-            placeholder="Çalışan ara..."
-            placeholderTextColor={colors.textFaint}
-            value={query}
-            onChangeText={setQuery}
-            autoCapitalize="none"
-            returnKeyType="search"
-            autoFocus
-          />
-          {query.length > 0 && (
-            <Pressable
-              onPress={() => setQuery('')}
-              accessibilityRole="button"
-              accessibilityLabel="Aramayı temizle"
-              hitSlop={8}>
-              <Feather name="x" size={15} color={colors.textFaint} />
-            </Pressable>
-          )}
-        </View>
+        <SearchInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Çalışan ara..."
+          autoFocus
+        />
       </View>
 
       <FlatList
@@ -160,22 +146,9 @@ function ContactRow({
   onPress: () => void;
 }) {
   const { colors } = useDesign();
-  const [hovered, setHovered] = useState(false);
 
   return (
-    <Pressable
-      onPress={onPress}
-      onHoverIn={() => setHovered(true)}
-      onHoverOut={() => setHovered(false)}
-      accessibilityRole="button"
-      accessibilityLabel={`${name} ile sohbet başlat`}
-      style={({ pressed }) => [
-        styles.row,
-        {
-          backgroundColor: pressed || hovered ? colors.surfaceRaised : colors.surface,
-          borderColor: colors.border,
-        },
-      ]}>
+    <ListRow onPress={onPress} accessibilityLabel={`${name} ile sohbet başlat`}>
       <Avatar firstName={firstName} lastName={lastName} size={44} />
       <View style={styles.rowBody}>
         <ThemedText style={styles.rowName} numberOfLines={1}>
@@ -186,7 +159,7 @@ function ContactRow({
         </ThemedText>
       </View>
       <Feather name="chevron-right" size={16} color={colors.textFaint} />
-    </Pressable>
+    </ListRow>
   );
 }
 
@@ -197,7 +170,7 @@ const styles = StyleSheet.create({
   // diye); başlık ve liste içeriği burada ortalanıyor.
   headerWrap: {
     width: '100%',
-    maxWidth: 480,
+    maxWidth: NARROW_MAX_WIDTH,
     alignSelf: 'center',
     paddingHorizontal: Space.xl,
     paddingTop: Space.lg,
@@ -206,7 +179,7 @@ const styles = StyleSheet.create({
   subtitle: { fontSize: 14 },
   listContent: {
     width: '100%',
-    maxWidth: 480,
+    maxWidth: NARROW_MAX_WIDTH,
     alignSelf: 'center',
     paddingHorizontal: Space.xl,
     paddingTop: Space.md,
@@ -214,31 +187,7 @@ const styles = StyleSheet.create({
     gap: Space.md,
   },
 
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space.sm,
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.lg,
-    paddingVertical: Platform.OS === 'web' ? 10 : 6,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    paddingVertical: 4,
-    ...Platform.select({ web: { outlineStyle: 'none' } as object, default: {} }),
-  },
-
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space.md,
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.md,
-  },
+  // Satır kabuğunu ListRow çiziyor
   rowBody: { flex: 1, gap: 2 },
   rowName: { fontSize: 15, fontWeight: '700' },
   rowRole: { fontSize: 12 },

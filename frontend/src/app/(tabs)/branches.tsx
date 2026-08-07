@@ -12,18 +12,13 @@ import { Button } from '@/components/ui/button';
 import { LabeledInput } from '@/components/ui/labeled-input';
 import { useDesign } from '@/hooks/use-design';
 import { Radius, Space } from '@/constants/design';
-import { normalizePhone } from '@/utils/phone';
+import { isValidPhone, normalizePhone } from '@/utils/phone';
+import { isValidEmail } from '@/utils/validation';
 import { Branch, DEFAULT_LEAVE_DAYS } from '@/services/branches';
 import { showToast } from '@/store/toastStore';
 import { useBranchesStore } from '@/store/branchesStore';
 import { useUsersStore, getBranchUsers } from '@/store/usersStore';
 import { useColumns } from '@/hooks/use-columns';
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^0(5\d{9}|[2-4]\d{9})$/;
-function isValidPhone(p: string) {
-  return PHONE_REGEX.test(p.replace(/\D/g, ''));
-}
 
 // ---- Şube formu (ekleme + düzenleme ortak) ----
 function BranchForm({ initial, onDone }: { initial?: Branch; onDone: () => void }) {
@@ -45,7 +40,7 @@ function BranchForm({ initial, onDone }: { initial?: Branch; onDone: () => void 
     if (city.trim().length === 0) return setError('Şehir boş olamaz');
     if (address.trim().length === 0) return setError('Adres boş olamaz');
     if (!isValidPhone(phone)) return setError('Geçerli bir telefon numarası gir');
-    if (!EMAIL_REGEX.test(email)) return setError('Geçerli bir şube e-postası gir');
+    if (!isValidEmail(email)) return setError('Geçerli bir şube e-postası gir');
     setError('');
 
     // İzin günü boş bırakılırsa varsayılan (15)

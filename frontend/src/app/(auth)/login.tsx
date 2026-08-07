@@ -10,8 +10,7 @@ import { Space } from '@/constants/design';
 import { useDesign } from '@/hooks/use-design';
 import { loginRequest } from '@/services/auth';
 import { useAuthStore } from '@/store/authStore';
-
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+import { isValidEmail } from '@/utils/validation';
 
 export default function LoginScreen() {
   const { colors } = useDesign();
@@ -22,7 +21,7 @@ export default function LoginScreen() {
   const login = useAuthStore((s) => s.login);
 
   const handleLogin = async () => {
-    if (!EMAIL_REGEX.test(email)) {
+    if (!isValidEmail(email)) {
       setError('Geçerli bir e-posta adresi gir');
       return;
     }

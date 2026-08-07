@@ -1,34 +1,23 @@
 import Feather from '@expo/vector-icons/Feather';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  FlatList,
-  Platform,
-  Pressable,
-  RefreshControl,
-  StyleSheet,
-  TextInput,
-  View,
-} from 'react-native';
+import { FlatList, RefreshControl, StyleSheet, View } from 'react-native';
 import Animated, { FadeIn, FadeInDown } from 'react-native-reanimated';
 
 import { ChatPane } from '@/components/messages/chat-pane';
 import { ThemedText } from '@/components/themed-text';
 import { Avatar, splitFullName } from '@/components/ui/avatar';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ListRow } from '@/components/ui/list-row';
 import { Screen } from '@/components/ui/screen';
+import { SearchInput } from '@/components/ui/search-input';
 import { Radius, Shadow, Space } from '@/constants/design';
+import { LIST_PANE_WIDTH, NARROW_MAX_WIDTH, PAGE_MAX_WIDTH } from '@/constants/layout';
 import { useDesign } from '@/hooks/use-design';
 import { useWideLayout } from '@/hooks/use-columns';
 import { useMessagesStore } from '@/store/messagesStore';
 
 import type { Conversation } from '@/services/messages';
-
-/**
- * Geniş ekranda soldaki liste sütunu. İzin Onay ekranıyla aynı ölçü
- * (leave-approval.tsx → LIST_PANE_WIDTH) — iki konsol aynı ızgarada okunur.
- */
-const LIST_PANE_WIDTH = 380;
 
 /** Hem geniş ekrandaki seçici listede hem dar ekrandaki listede aynı satır */
 function ConversationRow({
@@ -43,7 +32,6 @@ function ConversationRow({
   onPress: () => void;
 }) {
   const { colors } = useDesign();
-  const [hovered, setHovered] = useState(false);
   const [firstName, lastName] = splitFullName(item.name);
 
   return (
@@ -53,23 +41,7 @@ function ConversationRow({
         .duration(260)
         .springify()
         .damping(18)}>
-      <Pressable
-        onPress={onPress}
-        onHoverIn={() => setHovered(true)}
-        onHoverOut={() => setHovered(false)}
-        accessibilityRole="button"
-        accessibilityState={{ selected: active }}
-        style={[
-          styles.row,
-          {
-            backgroundColor: active
-              ? colors.primarySoft
-              : hovered
-                ? colors.surfaceRaised
-                : colors.surface,
-            borderColor: active ? colors.primary : colors.border,
-          },
-        ]}>
+      <ListRow onPress={onPress} active={active} accessibilityLabel={`${item.name} sohbeti`}>
         <Avatar firstName={firstName} lastName={lastName} size={44} />
 
         <View style={styles.rowBody}>
@@ -107,7 +79,7 @@ function ConversationRow({
             )}
           </View>
         </View>
-      </Pressable>
+      </ListRow>
     </Animated.View>
   );
 }
@@ -157,28 +129,15 @@ export default function MessagesScreen() {
     [visibleList, focusedId],
   );
 
+  // Element olarak tutuluyor (fonksiyon değil): ListHeaderComponent'e fonksiyon
+  // verilirse her render'da yeni bileşen tipi üretilip alanın odağı düşer.
   const searchBox = (
-    <View style={[styles.searchBox, { backgroundColor: colors.surface, borderColor: colors.border }]}>
-      <Feather name="search" size={15} color={colors.textFaint} />
-      <TextInput
-        style={[styles.searchInput, { color: colors.text }]}
-        placeholder="Sohbet ara..."
-        placeholderTextColor={colors.textFaint}
-        value={query}
-        onChangeText={setQuery}
-        autoCapitalize="none"
-        returnKeyType="search"
-      />
-      {query.length > 0 && (
-        <Pressable
-          onPress={() => setQuery('')}
-          accessibilityRole="button"
-          accessibilityLabel="Aramayı temizle"
-          hitSlop={8}>
-          <Feather name="x" size={15} color={colors.textFaint} />
-        </Pressable>
-      )}
-    </View>
+    <SearchInput
+      value={query}
+      onChangeText={setQuery}
+      placeholder="Sohbet ara..."
+      style={styles.search}
+    />
   );
 
   const emptyState =
@@ -308,7 +267,7 @@ const styles = StyleSheet.create({
   page: {
     flex: 1,
     width: '100%',
-    maxWidth: 1600,
+    maxWidth: PAGE_MAX_WIDTH,
     alignSelf: 'center',
     paddingHorizontal: Space.xl,
     paddingTop: Space.xl,
@@ -362,7 +321,7 @@ const styles = StyleSheet.create({
      içeriğini burada ortalıyoruz. */
   headerWrap: {
     width: '100%',
-    maxWidth: 480,
+    maxWidth: NARROW_MAX_WIDTH,
     alignSelf: 'center',
     paddingHorizontal: Space.xl,
     paddingTop: Space.xl,
@@ -371,7 +330,7 @@ const styles = StyleSheet.create({
   },
   listContent: {
     width: '100%',
-    maxWidth: 480,
+    maxWidth: NARROW_MAX_WIDTH,
     alignSelf: 'center',
     paddingHorizontal: Space.xl,
     paddingBottom: Space.xxl,
@@ -379,35 +338,9 @@ const styles = StyleSheet.create({
     gap: Space.md,
   },
 
-  // Arama
-  searchBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space.sm,
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.lg,
-    paddingVertical: Platform.OS === 'web' ? 10 : 6,
-    marginBottom: Space.xs,
-  },
-  searchInput: {
-    flex: 1,
-    fontSize: 14,
-    paddingVertical: 4,
-    // Web'de input'un varsayılan odak çerçevesi kutunun içinde çift çizgi yapıyor
-    ...Platform.select({ web: { outlineStyle: 'none' } as object, default: {} }),
-  },
+  search: { marginBottom: Space.xs },
 
-  // Sohbet satırı
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Space.md,
-    borderWidth: 1,
-    borderRadius: Radius.md,
-    paddingHorizontal: Space.md,
-    paddingVertical: Space.md,
-  },
+  // Sohbet satırı içeriği (kabuğu ListRow çiziyor)
   rowBody: { flex: 1, gap: 2 },
   rowLine: {
     flexDirection: 'row',

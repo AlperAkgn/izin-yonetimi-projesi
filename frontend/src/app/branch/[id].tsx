@@ -12,16 +12,12 @@ import { LabeledInput } from '@/components/ui/labeled-input';
 import { useDesign } from '@/hooks/use-design';
 import { Radius, Space } from '@/constants/design';
 import { showConfirm } from '@/utils/alert';
-import { normalizePhone } from '@/utils/phone';
+import { isValidPhone, normalizePhone } from '@/utils/phone';
+import { isValidEmail } from '@/utils/validation';
 import { showToast } from '@/store/toastStore';
 import { useBranchesStore } from '@/store/branchesStore';
 import { useUsersStore, getBranchUsers, AppUser, UserRole } from '@/store/usersStore';
 
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-const PHONE_REGEX = /^0(5\d{9}|[2-4]\d{9})$/;
-function isValidPhone(p: string) {
-  return PHONE_REGEX.test(p.replace(/\D/g, ''));
-}
 const ROLE_LABEL: Record<UserRole, string> = { EMPLOYEE: 'Personel', HR: 'İnsan Kaynakları' };
 
 // ---- Personel oluşturma formu ----
@@ -39,7 +35,7 @@ function CreateStaffForm({ branchId, onDone }: { branchId: string; onDone: () =>
   const handleSave = async () => {
     if (firstName.trim().length === 0) return setError('İsim boş olamaz');
     if (lastName.trim().length === 0) return setError('Soyisim boş olamaz');
-    if (!EMAIL_REGEX.test(email)) return setError('Geçerli bir e-posta gir');
+    if (!isValidEmail(email)) return setError('Geçerli bir e-posta gir');
     if (!isValidPhone(phone)) return setError('Geçerli bir telefon numarası gir');
     setError('');
 

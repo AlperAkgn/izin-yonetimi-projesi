@@ -1,17 +1,19 @@
 import { useWindowDimensions } from 'react-native';
 
+import { WIDE_MIN_WIDTH } from '@/constants/layout';
+
 export function useColumns() {
   const { width } = useWindowDimensions();
-  if (width >= 1000) return 3;
+  if (width >= WIDE_MIN_WIDTH) return 3;
   if (width >= 640) return 2;
   return 1;
 }
 
 /**
- * Panel'in masaüstü düzenine geçtiği eşik. Yalnızca yönetici/İK panelinde
+ * Ekranın masaüstü düzenine geçtiği eşik. Yalnızca yönetici/İK ekranlarında
  * kullanılır; bu eşiğin altında (telefon/tablet) ekran bugünkü haliyle kalır.
  */
 export function useWideLayout(): boolean {
   const { width } = useWindowDimensions();
-  return width >= 1000;
+  return width >= WIDE_MIN_WIDTH;
 }
