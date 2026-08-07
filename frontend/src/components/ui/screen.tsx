@@ -1,7 +1,10 @@
 import { ReactNode, ReactElement } from 'react';
 import { ScrollView, View, StyleSheet, RefreshControlProps } from 'react-native';
-import { useDesign } from '@/hooks/use-design';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+
+import { CONTENT_WIDE_MAX_WIDTH, NARROW_MAX_WIDTH } from '@/constants/layout';
 import { Space } from '@/constants/design';
+import { useDesign } from '@/hooks/use-design';
 
 export function Screen({
   children,
@@ -16,7 +19,10 @@ export function Screen({
   refreshControl?: ReactElement<RefreshControlProps>;
 }) {
   const { colors } = useDesign();
-  const maxWidth = wide ? 1200 : 480;
+  // Android SDK 54 kenardan kenara çiziyor: sabit dolguyla kalsaydı listenin
+  // sonundaki kart sistem gezinme çubuğunun altında kalırdı.
+  const insets = useSafeAreaInsets();
+  const maxWidth = wide ? CONTENT_WIDE_MAX_WIDTH : NARROW_MAX_WIDTH;
 
   if (scroll) {
     // Kaydırma en dışta, tam genişlikte → çubuk ekranın en sağında.
@@ -24,7 +30,7 @@ export function Screen({
     return (
       <ScrollView
         style={[styles.root, { backgroundColor: colors.bg }]}
-        contentContainerStyle={styles.scrollContent}
+        contentContainerStyle={[styles.scrollContent, { paddingBottom: Space.xl + insets.bottom }]}
         refreshControl={refreshControl}>
         <View style={[styles.inner, { maxWidth }]}>{children}</View>
       </ScrollView>
@@ -35,7 +41,8 @@ export function Screen({
   // Burada maxWidth ile saramıyoruz — FlatList'i sarmak onun kaydırma
   // çubuğunu da o dar kutunun kenarına hapseder. Genişlik/dolgu sınırlamasını
   // çağıran ekran kendi contentContainerStyle'ında uygular (Screen'in
-  // scroll=true yolundaki maxWidth mantığıyla aynı prensip).
+  // scroll=true yolundaki maxWidth mantığıyla aynı prensip); alt güvenli alanı
+  // da orada eklemesi gerekir.
   return <View style={[styles.root, { backgroundColor: colors.bg }]}>{children}</View>;
 }
 

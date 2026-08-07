@@ -35,11 +35,9 @@ import {
 import { showToast } from '@/store/toastStore';
 import { showConfirm } from '@/utils/alert';
 import { countNetWeekdays, formatDate } from '@/utils/date';
-import { normalizePhone } from '@/utils/phone';
+import { isValidPhone, normalizePhone } from '@/utils/phone';
 
 import type { LeaveRequest, LeaveStatus, LeaveType } from '@/store/leaveRequestsStore';
-
-const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
 
 // Karakter limitleri
 const LIMITS = {
@@ -52,11 +50,6 @@ const LIMITS = {
 const DRAFT_ID = '__draft__';
 
 type Tab = 'new' | 'mine';
-
-function isValidPhone(phone: string) {
-  const cleaned = phone.replace(/[\s()-]/g, '');
-  return PHONE_REGEX.test(cleaned);
-}
 
 // ─── Alan doğrulayıcıları ─────────────────────────────────────────
 // "Boş bırakılamaz" uyarıları SADECE gönderimde çıkar. Alanlar arasında

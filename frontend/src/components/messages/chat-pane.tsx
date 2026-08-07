@@ -18,6 +18,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ThemedText } from '@/components/themed-text';
 import { Avatar, splitFullName } from '@/components/ui/avatar';
 import { Radius, Space } from '@/constants/design';
+import { CHAT_READING_WIDTH, webInputReset } from '@/constants/layout';
 import { useDesign } from '@/hooks/use-design';
 import { clockLabel, dayLabel, isSameDay, MAX_FILE_BYTES } from '@/services/messages';
 import { useMessagesStore } from '@/store/messagesStore';
@@ -36,9 +37,6 @@ const NO_MESSAGES: Message[] = [];
 
 /** Dibe bu kadar yakınsak liste "takipte" sayılır; yeni mesaj gelince kayar */
 const STICK_TO_BOTTOM_PX = 80;
-
-/** Gömülü panelde satırların okunmaz uzunlukta olmasını engelleyen okuma sütunu */
-const READING_WIDTH = 820;
 
 /** Mesaj listesinde tarih değişimini işaretleyen ayraç */
 function DayDivider({ label }: { label: string }) {
@@ -415,7 +413,7 @@ const styles = StyleSheet.create({
   // Geniş panelde baloncuklar uçtan uca yayılmasın
   messageListWide: {
     width: '100%',
-    maxWidth: READING_WIDTH,
+    maxWidth: CHAT_READING_WIDTH,
     alignSelf: 'center',
     paddingHorizontal: Space.lg,
     paddingVertical: Space.lg,
@@ -489,7 +487,7 @@ const styles = StyleSheet.create({
     maxHeight: 100,
     fontSize: 15,
     // Web'de input'un varsayılan odak çerçevesi baloncuk hattını bozuyor
-    ...Platform.select({ web: { outlineStyle: 'none' } as object, default: {} }),
+    ...webInputReset,
   },
   sendButton: {
     width: 40,

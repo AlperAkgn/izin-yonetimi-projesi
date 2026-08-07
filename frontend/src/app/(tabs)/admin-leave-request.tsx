@@ -25,14 +25,14 @@ import {
 } from '@/store/leaveRequestsStore';
 import { showToast } from '@/store/toastStore';
 import { getAllLoadedUsers, useUsersStore } from '@/store/usersStore';
+import { PAGE_MAX_WIDTH, SUMMARY_PANE_WIDTH } from '@/constants/layout';
+import { useWideLayout } from '@/hooks/use-columns';
 import { countNetWeekdays, formatDate } from '@/utils/date';
-import { normalizePhone } from '@/utils/phone';
+import { isValidPhone, normalizePhone } from '@/utils/phone';
+import { isValidEmail } from '@/utils/validation';
 
 import type { LeaveRequest, LeaveType } from '@/store/leaveRequestsStore';
 import type { AppUser } from '@/store/usersStore';
-
-const PHONE_REGEX = /^(\+90|0)?5\d{9}$/;
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 // Karakter limitleri
 const LIMITS = {
@@ -51,18 +51,6 @@ const DRAFT_ID = '__draft__';
  * Bu genişlikten itibaren ekran "solda form / sağda canlı özet" düzenine geçer.
  * Altında form tek kolon karta düşer (dar tarayıcı penceresi için).
  */
-const SPLIT_MIN_WIDTH = 1000;
-const SUMMARY_PANE_WIDTH = 340;
-
-function isValidPhone(phone: string) {
-  const cleaned = phone.replace(/[\s()-]/g, '');
-  return PHONE_REGEX.test(cleaned);
-}
-
-function isValidEmail(email: string) {
-  return EMAIL_REGEX.test(email.trim());
-}
-
 // ─── Alan doğrulayıcıları ─────────────────────────────────────────
 // "Boş bırakılamaz" uyarıları SADECE gönderimde çıkar; alanlar arasında
 // gezerken doldurulmamış her alan için kırmızı mesaj görmek rahatsız edici.
@@ -85,13 +73,20 @@ function validatePhone(value: string) {
 
 /**
  * İsim/soyisim artık formda sorulmuyor — kayda yazılacak ad yalnızca eşleşen
- * çalışandan okunabildiği için e-posta kayıtlı bir çalışanı bulmak ZORUNDA.
+ * kişiden okunabildiği için e-posta kayıtlı birini bulmak ZORUNDA.
+ *
+ * `inactive`: adres sistemde var ama seçilemiyor. Eskiden bu durumda da
+ * "kayıtlı çalışan bulunamadı" yazıyordu ve veri hatası gibi görünüyordu.
  */
-function validateEmail(value: string, matched: AppUser | undefined) {
+function validateEmail(value: string, matched: AppUser | undefined, inactive: AppUser | undefined) {
   if (value.trim().length === 0) return 'E-posta adresi boş bırakılamaz.';
   const format = validateEmailFormat(value);
   if (format) return format;
-  return matched ? undefined : 'Bu e-posta ile kayıtlı bir çalışan bulunamadı.';
+  if (matched) return undefined;
+  if (inactive) {
+    return 'Bu kişinin hesabı pasif durumda; önce Şubeler ekranından aktifleştir.';
+  }
+  return 'Bu e-posta ile erişebildiğin şubelerde kayıtlı bir kişi bulunamadı.';
 }
 
 function validateAddress(value: string) {
@@ -154,7 +149,7 @@ export default function AdminLeaveRequestScreen() {
   const users = useMemo(() => getAllLoadedUsers(byBranch), [byBranch]);
 
   /** Geniş ekranda form + özet paneli, dar ekranda tek kolon kart */
-  const split = width >= SPLIT_MIN_WIDTH;
+  const split = useWideLayout();
   const stackFields = width < 640; // ikili alanlar dar ekranda alt alta
 
   // Çalışan bilgileri — isim/soyisim sorulmaz, e-posta eşleşmesinden okunur
@@ -180,18 +175,29 @@ export default function AdminLeaveRequestScreen() {
   const netDays = countNetWeekdays(startDate, endDate);
 
   /**
-   * Çalışan e-posta ile eşleştirilir (e-posta sistemde benzersiz).
-   * Backend on-behalf kaydını yalnızca AKTİF ve PERSONEL rolündeki
-   * kullanıcılar için kabul eder; eşleşme de aynı kurala uyar.
+   * Kişi e-posta ile eşleştirilir (e-posta sistemde benzersiz).
+   *
+   * Rol filtresi YOK: izni personel de İK da kullanıyor, ikisine de kayıt
+   * yazılabilir (backend aynı kuralda — yalnız yönetici hesabı hariç).
+   * `byBranch` zaten yönetici kayıtlarını içermiyor: şube kullanıcıları ucu
+   * ADMIN rolünü listeye almıyor.
    */
   const matchedUser = useMemo(() => {
     const mail = email.trim().toLocaleLowerCase('tr-TR');
     if (mail === '') return undefined;
-    return users.find(
-      (u) =>
-        u.isActive && u.role === 'EMPLOYEE' && u.email.toLocaleLowerCase('tr-TR') === mail,
-    );
+    return users.find((u) => u.isActive && u.email.toLocaleLowerCase('tr-TR') === mail);
   }, [users, email]);
+
+  /**
+   * Adres sistemde var ama listede yok — pasif kullanıcı, erişilemeyen şube
+   * veya yönetici hesabı olabilir. "Kayıtlı kullanıcı yok" demek yanıltıcı
+   * olduğu için bu durumu ayrı mesajla anlatıyoruz.
+   */
+  const inactiveMatch = useMemo(() => {
+    const mail = email.trim().toLocaleLowerCase('tr-TR');
+    if (mail === '' || matchedUser) return undefined;
+    return users.find((u) => u.email.toLocaleLowerCase('tr-TR') === mail);
+  }, [users, email, matchedUser]);
 
   /** İzin kaydına yazılacak şube — eşleşen çalışanın şubesi */
   const resolvedBranch = useMemo(() => {
@@ -282,7 +288,7 @@ export default function AdminLeaveRequestScreen() {
 
     const nextFieldErrors = {
       phone: validatePhone(phone),
-      email: validateEmail(email, matchedUser),
+      email: validateEmail(email, matchedUser, inactiveMatch),
       leaveAddress: validateAddress(leaveAddress),
     };
 
@@ -730,13 +736,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
   },
 
-  /* ── Geniş ekran düzeni (>= SPLIT_MIN_WIDTH) ─────────────────
+  /* ── Geniş ekran düzeni (>= WIDE_MIN_WIDTH) ──────────────────
      Sayfa ekranın iki yakasına açılır; üst sınır yalnızca ultra geniş
      monitörlerde form alanlarının gereksiz uzamasını engeller. */
   widePage: {
     flex: 1,
     width: '100%',
-    maxWidth: 1600,
+    maxWidth: PAGE_MAX_WIDTH,
     alignSelf: 'center',
     paddingHorizontal: Space.xl,
     paddingTop: Space.xl,

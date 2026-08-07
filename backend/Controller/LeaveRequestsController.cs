@@ -206,9 +206,16 @@ namespace LeaveManagementAPI.Controller
             var employee = await _context.Users.SingleOrDefaultAsync(
                 user => user.Mail.ToLower() == normalizedMail && user.IsActive,
                 cancellationToken);
-            if (employee is null || employee.Role != UserRole.EMPLOYEE)
+            if (employee is null)
             {
-                return NotFound(new { message = "Bu e-posta adresiyle aktif bir calisan bulunamadi." });
+                return NotFound(new { message = "Bu e-posta adresiyle aktif bir kullanici bulunamadi." });
+            }
+
+            // Izin kullanan herkes: personel ve IK. Yonetici hesabina izin
+            // yazilmaz — sube atamasi kapsam icin, calisma takvimi icin degil.
+            if (employee.Role == UserRole.ADMIN)
+            {
+                return BadRequest(new { message = "Yonetici hesabina izin kaydi olusturulamaz." });
             }
 
             var startDate = NormalizeDate(request.StartDate);
